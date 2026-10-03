@@ -4,13 +4,18 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
+import {
+  v2 as cloudinary,
+  type UploadApiOptions,
+  type UploadApiResponse,
+} from 'cloudinary';
 import type { Env } from '../config/env.js';
 
 @Injectable()
 export class UploadsService {
   private readonly logger = new Logger(UploadsService.name);
   private readonly folder: string;
+  private readonly avatarFolder: string;
 
   constructor(config: ConfigService<Env, true>) {
     const url = new URL(config.get('CLOUDINARY_URL'));
@@ -21,15 +26,31 @@ export class UploadsService {
       secure: true,
     });
     this.folder = config.get('CLOUDINARY_FOLDER');
+    this.avatarFolder = config.get('CLOUDINARY_AVATAR_FOLDER');
   }
 
-  /** Uploads an image buffer and returns its HTTPS delivery URL. */
-  async uploadImage(buffer: Buffer): Promise<string> {
+  /** Uploads a property photo and returns its HTTPS delivery URL. */
+  uploadImage(buffer: Buffer): Promise<string> {
+    return this.upload(buffer, { folder: this.folder });
+  }
+
+  /** Stores a square, face-centred avatar so the original full-size photo is never kept. */
+  uploadAvatar(buffer: Buffer): Promise<string> {
+    return this.upload(buffer, {
+      folder: this.avatarFolder,
+      transformation: [
+        { width: 512, height: 512, crop: 'fill', gravity: 'face' },
+        { quality: 'auto' },
+      ],
+    });
+  }
+
+  private async upload(buffer: Buffer, options: UploadApiOptions): Promise<string> {
     try {
       const result = await new Promise<UploadApiResponse>((resolve, reject) => {
         cloudinary.uploader
           .upload_stream(
-            { folder: this.folder, resource_type: 'image' },
+            { ...options, resource_type: 'image' },
             (error, response) =>
               error || !response ? reject(error ?? new Error('Empty response')) : resolve(response),
           )

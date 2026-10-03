@@ -17,9 +17,11 @@ export interface UserDto {
   email: string;
   name: string;
   phone: string;
+  avatarUrl: string | null;
   role: Role;
   companyId: string | null;
   companyName: string | null;
+  createdAt: Date;
 }
 
 export interface AuthResponse {

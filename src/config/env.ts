@@ -43,6 +43,9 @@ export class Env {
 
   @IsString()
   CLOUDINARY_FOLDER = 'nectar/properties';
+
+  @IsString()
+  CLOUDINARY_AVATAR_FOLDER = 'nectar/avatars';
 }
 
 export function validateEnv(raw: Record<string, unknown>): Env {

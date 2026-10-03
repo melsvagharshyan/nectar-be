@@ -1,11 +1,16 @@
-import { Body, Controller, Get, HttpCode, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import type { Env } from '../config/env.js';
 import { AuthService } from './auth.service.js';
 import type { AuthResponse, AuthUser, IssuedSession } from './auth.types.js';
 import { CurrentUser, Public } from './decorators.js';
-import { SignInDto, SignUpDto } from './dto.js';
+import {
+  ChangePasswordDto,
+  SignInDto,
+  SignUpDto,
+  UpdateProfileDto,
+} from './dto.js';
 import { clearSessionCookie, setSessionCookie } from './session-cookie.js';
 
 @Controller('auth')
@@ -44,6 +49,17 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
     return this.auth.getUser(user.id);
+  }
+
+  @Patch('me')
+  updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
+    return this.auth.updateProfile(user.id, dto);
+  }
+
+  @HttpCode(204)
+  @Post('password')
+  changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
+    return this.auth.changePassword(user.id, dto);
   }
 
   private get secureCookies() {

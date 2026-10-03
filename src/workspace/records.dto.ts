@@ -16,6 +16,7 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
+import { MEDIA_URL } from '../uploads/media-url.js';
 
 export const PROPERTY_TYPES = [
   'Квартира',
@@ -28,10 +29,6 @@ export const PROPERTY_TYPES = [
 
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
-
-/** Only photos uploaded through `POST /uploads` (Cloudinary delivery URLs). */
-const MEDIA_URL = /^https:\/\/res\.cloudinary\.com\/[\w-]+\/image\/upload\/\S+$/;
-
 export class ClientDto {
   @Transform(trim)
   @IsString()

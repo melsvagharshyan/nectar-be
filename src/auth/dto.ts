@@ -5,10 +5,12 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import { MEDIA_URL } from '../uploads/media-url.js';
 import type { Role } from './auth.types.js';
 
 const normalizeEmail = ({ value }: { value: unknown }) =>
@@ -62,4 +64,35 @@ export class SignUpDto {
   @IsString()
   @IsNotEmpty({ message: 'Введите код администратора' })
   adminCode?: string;
+}
+
+/** Omitted fields stay unchanged; `avatarUrl: null` removes the photo. */
+export class UpdateProfileDto {
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MinLength(2, { message: 'Имя должно содержать минимум 2 символа' })
+  @MaxLength(120)
+  name?: string;
+
+  @Transform(trim)
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+
+  @ValidateIf((o: UpdateProfileDto) => o.avatarUrl !== null && o.avatarUrl !== undefined)
+  @Matches(MEDIA_URL, { message: 'Некорректная ссылка на фото' })
+  avatarUrl?: string | null;
+}
+
+export class ChangePasswordDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Введите текущий пароль' })
+  currentPassword: string;
+
+  @IsString()
+  @MinLength(8, { message: 'Пароль должен содержать минимум 8 символов' })
+  @MaxLength(128)
+  newPassword: string;
 }

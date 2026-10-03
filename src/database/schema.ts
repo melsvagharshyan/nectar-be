@@ -93,6 +93,7 @@ export const users = pgTable('users', {
   role: userRole('role').notNull(),
   name: text('name').notNull(),
   phone: text('phone').notNull().default(''),
+  avatarUrl: text('avatar_url'),
   companyId: text('company_id').references(() => companies.id, {
     onDelete: 'restrict',
   }),
