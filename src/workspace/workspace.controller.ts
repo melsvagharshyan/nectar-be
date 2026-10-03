@@ -88,6 +88,12 @@ export class WorkspaceController {
   }
 
   @HttpCode(200)
+  @Post('events/read-all')
+  readAllEvents(@CurrentUser() user: AuthUser) {
+    return this.workflow.markAllEventsRead(user);
+  }
+
+  @HttpCode(200)
   @Post('events/:id/read')
   readEvent(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.workflow.markEventRead(user, id);

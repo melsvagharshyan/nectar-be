@@ -305,6 +305,22 @@ export class WorkflowService {
     return { ok: true };
   }
 
+  async markAllEventsRead(user: AuthUser): Promise<MutationResult> {
+    await this.db
+      .insert(t.eventReads)
+      .select(
+        this.db
+          .select({
+            userId: sql<string>`${user.id}::uuid`.as('user_id'),
+            eventId: t.events.id,
+          })
+          .from(t.events)
+          .where(eventScope(user)),
+      )
+      .onConflictDoNothing();
+    return { ok: true };
+  }
+
   private async run(
     _user: AuthUser,
     action: (tx: Transaction) => Promise<void>,
