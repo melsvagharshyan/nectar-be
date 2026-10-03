@@ -25,7 +25,7 @@ function withoutCreatedAt<T extends { createdAt: Date }>(
 }
 
 @Injectable()
-export class WorkspaceService {
+export class ReferenceSnapshot {
   constructor(@Inject(DB) private readonly db: Database) {}
 
   /**

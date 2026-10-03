@@ -22,9 +22,8 @@ import type {
   RequestDto,
 } from './records.dto.js';
 import { isOpenStage } from './rules.js';
+import type { MutationResult } from './lists.types.js';
 import { WorkflowService } from './workflow.service.js';
-import { WorkspaceService } from './workspace.service.js';
-import type { WorkspaceState } from './workspace.types.js';
 
 const COMPANY_PREFIX = { rf: 'RF', am: 'AM' } as const;
 
@@ -39,7 +38,6 @@ function propertyTitle({ type, rooms, area }: PropertyDto) {
 export class RecordsService {
   constructor(
     @Inject(DB) private readonly db: Database,
-    private readonly workspace: WorkspaceService,
     private readonly workflow: WorkflowService,
   ) {}
 
@@ -220,11 +218,11 @@ export class RecordsService {
   }
 
   private async run(
-    user: AuthUser,
+    _user: AuthUser,
     action: (tx: Transaction) => Promise<void>,
-  ): Promise<WorkspaceState> {
+  ): Promise<MutationResult> {
     await this.db.transaction(action);
-    return this.workspace.snapshot(user);
+    return { ok: true };
   }
 
   private assertCompanyAccess(user: AuthUser, companyId: string) {

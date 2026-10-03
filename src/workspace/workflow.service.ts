@@ -13,7 +13,7 @@ import {
 } from '../database/database.module.js';
 import { nextId } from '../database/ids.js';
 import * as t from '../database/schema.js';
-import { WorkspaceService } from './workspace.service.js';
+import type { MutationResult } from './lists.types.js';
 import {
   canSeeRequest,
   isOfferAvailable,
@@ -22,7 +22,7 @@ import {
   OPEN_STAGES,
   SELECTED_OFFER_STATES,
 } from './rules.js';
-import type { WorkspaceState } from './workspace.types.js';
+import { eventScope } from './scope.js';
 
 type EventType = (typeof t.eventType.enumValues)[number];
 
@@ -34,10 +34,7 @@ interface RequestContext {
 
 @Injectable()
 export class WorkflowService {
-  constructor(
-    @Inject(DB) private readonly db: Database,
-    private readonly workspace: WorkspaceService,
-  ) {}
+  constructor(@Inject(DB) private readonly db: Database) {}
 
   /** Broker starts working on a freshly created request. */
   start(user: AuthUser, requestId: string) {
@@ -295,23 +292,25 @@ export class WorkflowService {
     });
   }
 
-  async markEventRead(user: AuthUser, eventId: string) {
-    const state = await this.workspace.snapshot(user);
-    if (!state.events.some((e) => e.id === eventId))
-      throw new NotFoundException('Уведомление недоступно');
+  async markEventRead(user: AuthUser, eventId: string): Promise<MutationResult> {
+    const [event] = await this.db
+      .select({ id: t.events.id })
+      .from(t.events)
+      .where(and(eq(t.events.id, eventId), eventScope(user)));
+    if (!event) throw new NotFoundException('Уведомление недоступно');
     await this.db
       .insert(t.eventReads)
       .values({ userId: user.id, eventId })
       .onConflictDoNothing();
-    return this.workspace.snapshot(user);
+    return { ok: true };
   }
 
   private async run(
-    user: AuthUser,
+    _user: AuthUser,
     action: (tx: Transaction) => Promise<void>,
-  ): Promise<WorkspaceState> {
+  ): Promise<MutationResult> {
     await this.db.transaction(action);
-    return this.workspace.snapshot(user);
+    return { ok: true };
   }
 
   private async loadRequest(

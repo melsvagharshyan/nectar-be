@@ -1,22 +1,12 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Param, Post } from '@nestjs/common';
 import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser, Roles } from '../auth/decorators.js';
 import { InterestDto, SellDto, SendOffersDto } from './dto.js';
 import { WorkflowService } from './workflow.service.js';
-import { WorkspaceService } from './workspace.service.js';
 
-/** Every mutation responds with the caller's refreshed workspace snapshot. */
 @Controller()
 export class WorkspaceController {
-  constructor(
-    private readonly workspace: WorkspaceService,
-    private readonly workflow: WorkflowService,
-  ) {}
-
-  @Get('workspace')
-  snapshot(@CurrentUser() user: AuthUser) {
-    return this.workspace.snapshot(user);
-  }
+  constructor(private readonly workflow: WorkflowService) {}
 
   @Roles('broker')
   @HttpCode(200)

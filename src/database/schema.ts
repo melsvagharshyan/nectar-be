@@ -76,15 +76,19 @@ export const companies = pgTable('companies', {
   createdAt: createdAt(),
 });
 
-export const employees = pgTable('employees', {
-  id: text('id').primaryKey(),
-  companyId: text('company_id')
-    .notNull()
-    .references(() => companies.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  phone: text('phone').notNull().default(''),
-  active: boolean('active').notNull().default(true),
-});
+export const employees = pgTable(
+  'employees',
+  {
+    id: text('id').primaryKey(),
+    companyId: text('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    phone: text('phone').notNull().default(''),
+    active: boolean('active').notNull().default(true),
+  },
+  (t) => [index('employees_company_idx').on(t.companyId)],
+);
 
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -103,20 +107,24 @@ export const users = pgTable('users', {
   createdAt: createdAt(),
 });
 
-export const clients = pgTable('clients', {
-  id: text('id').primaryKey(),
-  publicId: text('public_id').notNull().unique(),
-  companyId: text('company_id')
-    .notNull()
-    .references(() => companies.id, { onDelete: 'cascade' }),
-  employeeId: text('employee_id')
-    .notNull()
-    .references(() => employees.id),
-  name: text('name').notNull(),
-  phone: text('phone').notNull().default(''),
-  email: text('email').notNull().default(''),
-  createdAt: createdAt(),
-});
+export const clients = pgTable(
+  'clients',
+  {
+    id: text('id').primaryKey(),
+    publicId: text('public_id').notNull().unique(),
+    companyId: text('company_id')
+      .notNull()
+      .references(() => companies.id, { onDelete: 'cascade' }),
+    employeeId: text('employee_id')
+      .notNull()
+      .references(() => employees.id),
+    name: text('name').notNull(),
+    phone: text('phone').notNull().default(''),
+    email: text('email').notNull().default(''),
+    createdAt: createdAt(),
+  },
+  (t) => [index('clients_company_created_idx').on(t.companyId, t.createdAt, t.id)],
+);
 
 export const requests = pgTable(
   'requests',
@@ -144,7 +152,12 @@ export const requests = pgTable(
     amenities: text('amenities').array().notNull().default([]),
     createdAt: createdAt(),
   },
-  (t) => [index('requests_client_idx').on(t.clientId)],
+  (t) => [
+    index('requests_client_idx').on(t.clientId),
+    index('requests_stage_idx').on(t.stage),
+    index('requests_created_idx').on(t.createdAt, t.id),
+    index('requests_districts_gin').using('gin', t.districts),
+  ],
 );
 
 export const properties = pgTable(
@@ -181,7 +194,13 @@ export const properties = pgTable(
     media: text('media').array().notNull().default([]),
     createdAt: createdAt(),
   },
-  (t) => [index('properties_company_idx').on(t.companyId)],
+  (t) => [
+    index('properties_company_idx').on(t.companyId),
+    index('properties_availability_company_idx').on(t.availability, t.companyId),
+    index('properties_district_idx').on(t.district),
+    index('properties_price_idx').on(t.price),
+    index('properties_created_idx').on(t.createdAt, t.id),
+  ],
 );
 
 export const offers = pgTable(
@@ -206,33 +225,45 @@ export const offers = pgTable(
   (t) => [
     unique('offers_request_property_uq').on(t.requestId, t.propertyId),
     index('offers_property_idx').on(t.propertyId),
+    index('offers_company_idx').on(t.companyId, t.requestId),
   ],
 );
 
-export const transfers = pgTable('transfers', {
-  id: text('id').primaryKey(),
-  requestId: text('request_id')
-    .notNull()
-    .references(() => requests.id, { onDelete: 'cascade' }),
-  offerIds: text('offer_ids').array().notNull(),
-  state: transferState('state').notNull().default('demo_transferred'),
-  soldPropertyId: text('sold_property_id').references(() => properties.id, {
-    onDelete: 'set null',
-  }),
-  createdAt: createdAt(),
-});
+export const transfers = pgTable(
+  'transfers',
+  {
+    id: text('id').primaryKey(),
+    requestId: text('request_id')
+      .notNull()
+      .references(() => requests.id, { onDelete: 'cascade' }),
+    offerIds: text('offer_ids').array().notNull(),
+    state: transferState('state').notNull().default('demo_transferred'),
+    soldPropertyId: text('sold_property_id').references(() => properties.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [index('transfers_request_idx').on(t.requestId)],
+);
 
-export const events = pgTable('events', {
-  id: text('id').primaryKey(),
-  type: eventType('type').notNull(),
-  requestId: text('request_id')
-    .notNull()
-    .references(() => requests.id, { onDelete: 'cascade' }),
-  propertyId: text('property_id').references(() => properties.id, {
-    onDelete: 'set null',
-  }),
-  createdAt: createdAt(),
-});
+export const events = pgTable(
+  'events',
+  {
+    id: text('id').primaryKey(),
+    type: eventType('type').notNull(),
+    requestId: text('request_id')
+      .notNull()
+      .references(() => requests.id, { onDelete: 'cascade' }),
+    propertyId: text('property_id').references(() => properties.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('events_request_idx').on(t.requestId),
+    index('events_created_idx').on(t.createdAt, t.id),
+  ],
+);
 
 export const drafts = pgTable(
   'drafts',
@@ -248,7 +279,10 @@ export const drafts = pgTable(
       .references(() => companies.id, { onDelete: 'cascade' }),
     createdAt: createdAt(),
   },
-  (t) => [primaryKey({ columns: [t.requestId, t.propertyId] })],
+  (t) => [
+    primaryKey({ columns: [t.requestId, t.propertyId] }),
+    index('drafts_company_idx').on(t.companyId),
+  ],
 );
 
 export const eventReads = pgTable(

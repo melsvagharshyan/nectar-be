@@ -29,6 +29,13 @@
       "when": 1791045624225,
       "tag": "0003_drop_client_avatar",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791048633892,
+      "tag": "0004_list_indexes",
+      "breakpoints": true
     }
   ]
 }
