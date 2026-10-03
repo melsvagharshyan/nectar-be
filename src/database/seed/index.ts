@@ -98,7 +98,6 @@ async function main() {
         name: c.name,
         phone: c.phone,
         email: c.email,
-        avatar: images.portrait[c.avatar],
         createdAt: daysAgo(28 - i),
       })),
     );

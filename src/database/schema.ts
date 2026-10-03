@@ -115,7 +115,6 @@ export const clients = pgTable('clients', {
   name: text('name').notNull(),
   phone: text('phone').notNull().default(''),
   email: text('email').notNull().default(''),
-  avatar: text('avatar').notNull().default(''),
   createdAt: createdAt(),
 });
 

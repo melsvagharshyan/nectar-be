@@ -53,15 +53,14 @@ export const CLIENTS: {
   name: string;
   phone: string;
   email: string;
-  avatar: PortraitKey;
 }[] = [
-  { id: 'C-1', employeeId: 'RF-100-E01', name: 'Ольга Кузнецова', phone: '+7 916 220-31-45', email: 'olga.k@example.com', avatar: 'womanSmile' },
-  { id: 'C-2', employeeId: 'RF-100-E02', name: 'Сергей Морозов', phone: '+7 903 145-62-80', email: 'morozov.s@example.com', avatar: 'manSuit' },
-  { id: 'C-3', employeeId: 'RF-100-E01', name: 'Марина Лебедева', phone: '+7 925 870-14-02', email: 'm.lebedeva@example.com', avatar: 'womanCurly' },
-  { id: 'C-4', employeeId: 'RF-100-E03', name: 'Алексей Новиков', phone: '+7 917 604-55-19', email: 'a.novikov@example.com', avatar: 'manSmile' },
-  { id: 'C-5', employeeId: 'RF-100-E02', name: 'Татьяна Соколова', phone: '+7 926 318-90-77', email: 'sokolova.t@example.com', avatar: 'womanBlonde' },
-  { id: 'C-6', employeeId: 'RF-1-E01', name: 'Виктор Павлов', phone: '+7 985 402-63-11', email: 'v.pavlov@example.com', avatar: 'manCasual' },
-  { id: 'C-7', employeeId: 'RF-1-E02', name: 'Елена Фёдорова', phone: '+7 915 733-28-54', email: 'e.fedorova@example.com', avatar: 'womanDark' },
+  { id: 'C-1', employeeId: 'RF-100-E01', name: 'Ольга Кузнецова', phone: '+7 916 220-31-45', email: 'olga.k@example.com' },
+  { id: 'C-2', employeeId: 'RF-100-E02', name: 'Сергей Морозов', phone: '+7 903 145-62-80', email: 'morozov.s@example.com' },
+  { id: 'C-3', employeeId: 'RF-100-E01', name: 'Марина Лебедева', phone: '+7 925 870-14-02', email: 'm.lebedeva@example.com' },
+  { id: 'C-4', employeeId: 'RF-100-E03', name: 'Алексей Новиков', phone: '+7 917 604-55-19', email: 'a.novikov@example.com' },
+  { id: 'C-5', employeeId: 'RF-100-E02', name: 'Татьяна Соколова', phone: '+7 926 318-90-77', email: 'sokolova.t@example.com' },
+  { id: 'C-6', employeeId: 'RF-1-E01', name: 'Виктор Павлов', phone: '+7 985 402-63-11', email: 'v.pavlov@example.com' },
+  { id: 'C-7', employeeId: 'RF-1-E02', name: 'Елена Фёдорова', phone: '+7 915 733-28-54', email: 'e.fedorova@example.com' },
 ];
 
 export interface SeedProperty {

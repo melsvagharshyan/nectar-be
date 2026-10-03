@@ -36,7 +36,6 @@ export interface ClientView {
   name: string;
   phone: string;
   email: string;
-  avatar: string;
 }
 
 export interface RequestView {
