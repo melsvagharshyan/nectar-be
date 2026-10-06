@@ -57,6 +57,17 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @HttpCode(200)
+  @Post('admin/sign-in')
+  async adminSignIn(
+    @Body() dto: SignInDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponse> {
+    return this.startSession(res, await this.auth.signIn(dto, true));
+  }
+
+  @Public()
   @HttpCode(204)
   @Post('sign-out')
   signOut(@Res({ passthrough: true }) res: Response) {

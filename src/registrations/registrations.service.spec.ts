@@ -40,7 +40,7 @@ describe.skipIf(!process.env.DATABASE_URL)('Sign-up approval', () => {
     t = await createTestApp('registrations.spec.test');
     await t.cleanup();
     await t.createAdmin();
-    admin = await t.session('admin');
+    admin = await t.adminSession();
   });
 
   afterAll(() => t?.close());

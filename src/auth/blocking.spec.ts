@@ -25,7 +25,7 @@ describe.skipIf(!process.env.DATABASE_URL)('Account blocking', () => {
     t = await createTestApp('blocking.spec.test');
     await t.cleanup();
     adminId = await t.createAdmin();
-    admin = await t.session('admin');
+    admin = await t.adminSession();
 
     // A broker created the normal way: sign-up, then approval.
     await t.signUp('broker').expect(202);
@@ -46,6 +46,14 @@ describe.skipIf(!process.env.DATABASE_URL)('Account blocking', () => {
   });
 
   afterAll(() => t?.close());
+
+  it('keeps admin and cabinet sign-in apart', async () => {
+    const asCabinet = await t.signIn('admin').expect(401);
+    expect(asCabinet.body.message).toBe('Неверный email или пароль');
+    await t.adminSignIn('broker').expect(401);
+    await t.adminSignIn('nobody').expect(401);
+    await t.adminSignIn('admin', 'wrongpass1').expect(401);
+  });
 
   it('cuts off an existing session on its next request', async () => {
     oldSession = await t.session('broker');

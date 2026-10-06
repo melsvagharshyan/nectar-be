@@ -89,9 +89,18 @@ export async function createTestApp(domain: string) {
         .post('/api/auth/sign-in')
         .send({ email: email(local), password });
     },
+    adminSignIn(local: string, password = PASSWORD) {
+      return request(http)
+        .post('/api/auth/admin/sign-in')
+        .send({ email: email(local), password });
+    },
     /** Signs in and returns the session cookie for later requests. */
     async session(local: string, password = PASSWORD) {
       const res = await this.signIn(local, password).expect(200);
+      return res.get('Set-Cookie') ?? [];
+    },
+    async adminSession(local = 'admin', password = PASSWORD) {
+      const res = await this.adminSignIn(local, password).expect(200);
       return res.get('Set-Cookie') ?? [];
     },
   };

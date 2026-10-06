@@ -71,10 +71,15 @@ export class AuthService {
     return { status: 'pending', email: dto.email };
   }
 
-  async signIn(dto: SignInDto): Promise<IssuedSession> {
+  /**
+   * Admins sign in only through `/auth/admin/sign-in`, everyone else only
+   * through `/auth/sign-in`; the wrong door looks like a wrong password.
+   */
+  async signIn(dto: SignInDto, asAdmin = false): Promise<IssuedSession> {
     const [user] = await this.db
       .select({
         id: users.id,
+        role: users.role,
         passwordHash: users.passwordHash,
         blockedAt: users.blockedAt,
         blockReason: users.blockReason,
@@ -84,6 +89,7 @@ export class AuthService {
     if (user) {
       if (!(await verifyPassword(dto.password, user.passwordHash)))
         throw invalidCredentials();
+      if ((user.role === 'admin') !== asAdmin) throw invalidCredentials();
       if (user.blockedAt)
         throw new ForbiddenException({
           message: 'Аккаунт заблокирован администратором',
@@ -91,6 +97,12 @@ export class AuthService {
           reason: user.blockReason,
         });
       return this.issue(await this.getUser(user.id));
+    }
+
+    // Applications are never for admins.
+    if (asAdmin) {
+      await verifyPassword(dto.password, await DUMMY_HASH);
+      throw invalidCredentials();
     }
 
     // No account yet: the status is revealed only for the right password.
