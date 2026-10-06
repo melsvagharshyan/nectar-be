@@ -55,13 +55,6 @@ export const USERS: {
   { email: 'cascade.partner@example.com', role: 'partner', employeeId: 'AM-3-E01', avatar: 'womanDark' },
 ];
 
-export const ADMIN_USER = {
-  email: 'admin.demo@example.com',
-  name: 'Мария Ковалёва',
-  phone: '+7 916 555-12-40',
-  avatar: 'womanCurly',
-} as const satisfies { email: string; name: string; phone: string; avatar: PortraitKey };
-
 export const CLIENTS: {
   id: string;
   employeeId: string;

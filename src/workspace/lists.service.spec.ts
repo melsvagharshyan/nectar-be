@@ -17,8 +17,8 @@ if (existsSync('.env')) process.loadEnvFile('.env');
 const DEMO = {
   broker: 'nord.broker@example.com',
   partner: 'ararat.partner@example.com',
-  admin: 'admin.demo@example.com',
-} as const;
+  admin: process.env.ADMIN_EMAIL ?? '',
+};
 
 const ids = (items: { id: string }[]) => items.map((i) => i.id).sort();
 

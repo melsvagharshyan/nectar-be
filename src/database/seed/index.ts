@@ -6,7 +6,6 @@ import { matchScore } from '../../workspace/rules.js';
 import { createDatabase, type Transaction } from '../database.module.js';
 import * as t from '../schema.js';
 import {
-  ADMIN_USER,
   CLIENTS,
   COMPANIES,
   DEMO_PASSWORD,
@@ -40,9 +39,7 @@ const propertyById = new Map(PROPERTIES.map((p) => [p.id, p]));
 
 /** Removes everything a previous seed run created; the real accounts and their records stay. */
 async function clear(tx: Transaction) {
-  await tx
-    .delete(t.users)
-    .where(inArray(t.users.email, [...USERS.map((u) => u.email), ADMIN_USER.email]));
+  await tx.delete(t.users).where(inArray(t.users.email, USERS.map((u) => u.email)));
   await tx.delete(t.requests).where(inArray(t.requests.id, REQUESTS.map((r) => r.id)));
   await tx.delete(t.properties).where(inArray(t.properties.id, PROPERTIES.map((p) => p.id)));
   await tx.delete(t.clients).where(inArray(t.clients.id, CLIENTS.map((c) => c.id)));
@@ -99,15 +96,6 @@ async function main() {
         };
       }),
     );
-    await tx.insert(t.users).values({
-      email: ADMIN_USER.email,
-      passwordHash,
-      role: 'admin',
-      name: ADMIN_USER.name,
-      phone: ADMIN_USER.phone,
-      avatarUrl: images.portrait[ADMIN_USER.avatar],
-      createdAt: daysAgo(30),
-    });
     await tx.insert(t.clients).values(
       CLIENTS.map((c, i) => ({
         id: c.id,
@@ -186,7 +174,7 @@ async function main() {
   console.log(
     `Seeded ${COMPANIES.length} companies, ${CLIENTS.length} clients, ${PROPERTIES.length} properties, ${REQUESTS.length} requests.`,
   );
-  console.log(`Demo logins (password "${DEMO_PASSWORD}"): ${[...USERS.map((u) => u.email), ADMIN_USER.email].join(', ')}`);
+  console.log(`Demo logins (password "${DEMO_PASSWORD}"): ${USERS.map((u) => u.email).join(', ')}`);
 }
 
 main().catch((error: unknown) => {

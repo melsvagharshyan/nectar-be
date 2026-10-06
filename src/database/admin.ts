@@ -1,10 +1,12 @@
 /**
  * Creates an admin account. Admins never sign up through the app.
  *
+ *   npm run admin:create                       # uses ADMIN_EMAIL / ADMIN_NAME / ADMIN_PASSWORD
  *   npm run admin:create -- --email admin@example.com --name "Имя"
  *
- * The password is read from a hidden prompt, or from ADMIN_PASSWORD when
- * stdin is not a terminal (CI, scripts).
+ * Flags override ADMIN_EMAIL / ADMIN_NAME. The password comes from
+ * ADMIN_PASSWORD, or a hidden prompt when it is unset. Re-running with an
+ * existing email is a no-op, so it is safe to run on every deploy.
  */
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -70,11 +72,13 @@ async function main() {
       name: { type: 'string' },
     },
   });
-  const email = values.email?.trim().toLowerCase() ?? '';
-  const name = values.name?.trim() ?? '';
-  if (!EMAIL.test(email)) fail('Pass a valid --email.');
+  const email = (values.email ?? process.env.ADMIN_EMAIL ?? '')
+    .trim()
+    .toLowerCase();
+  const name = (values.name ?? process.env.ADMIN_NAME ?? '').trim();
+  if (!EMAIL.test(email)) fail('Set ADMIN_EMAIL or pass a valid --email.');
   if (name.length < 2 || name.length > 120)
-    fail('Pass --name with 2 to 120 characters.');
+    fail('Set ADMIN_NAME or pass --name with 2 to 120 characters.');
 
   const password = await readPassword();
   if (password.length < MIN_PASSWORD || password.length > MAX_PASSWORD)
@@ -94,8 +98,8 @@ async function main() {
       .returning({ id: users.id });
     console.log(`Created admin ${email} (${admin.id}).`);
   } catch (e) {
-    if (isUniqueViolation(e)) fail(`A user with email ${email} already exists.`);
-    throw e;
+    if (!isUniqueViolation(e)) throw e;
+    console.log(`A user with email ${email} already exists; skipping.`);
   } finally {
     await pool.end();
   }
