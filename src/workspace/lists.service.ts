@@ -313,7 +313,9 @@ export class ListsService {
     ]);
     const offers = rows.map((r) => r.offer);
     return {
-      items: await this.slices.withReservations(offers.map(toOfferView)),
+      items: await this.slices.withReservations(
+        offers.map((o) => toOfferView(user, o)),
+      ),
       total,
       page: q.page,
       limit: q.limit,
@@ -345,7 +347,10 @@ export class ListsService {
       q.price ? lte(t.properties.price, q.price) : undefined,
       q.area ? gte(t.properties.area, q.area) : undefined,
       q.rooms ? eq(t.properties.rooms, q.rooms) : undefined,
-      q.company ? eq(t.properties.companyId, q.company) : undefined,
+      // Admin-only: a broker filtering by company would learn who owns a listing.
+      user.role === 'admin' && q.company
+        ? eq(t.properties.companyId, q.company)
+        : undefined,
       q.matchRequest
         ? sql`${t.properties.availability} = 'active' and exists (
             select 1 from ${t.requests} r where r.id = ${q.matchRequest}

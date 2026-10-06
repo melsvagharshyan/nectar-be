@@ -278,6 +278,15 @@ describe.skipIf(!process.env.DATABASE_URL)('WorkflowService deal flow', () => {
       expect(await stageOf(id)).toBe('has_offers');
     });
 
+    it('does not re-review a broker save that changes nothing', async () => {
+      const id = await approvedRequest();
+      const before = await eventTypes(broker);
+      await records.updateRequest(broker, id, REQUEST);
+      expect(await stageOf(id)).toBe('in_progress');
+      expect(await visibleRequests(partner)).toContain(id);
+      expect(await eventTypes(broker)).toEqual(before);
+    });
+
     it('does not re-review an admin edit', async () => {
       const id = await approvedRequest();
       await records.updateRequest(admin, id, { ...REQUEST, rooms: 3 });
@@ -409,9 +418,73 @@ describe.skipIf(!process.env.DATABASE_URL)('WorkflowService deal flow', () => {
       expect((await offerOf(first)).state).toBe('unavailable');
       await expectScopesMatchRules();
     });
+
+    it('leaves out a booked property sold while the reservation waits for its lock', async () => {
+      const id = await approvedRequest();
+      const offerId = await approvedOffer(id);
+      await wf.setInterest(broker, offerId, true);
+
+      // Hold the property row as a concurrent sale would, so `transfer` reads
+      // its context first and then blocks on the lock.
+      const sale = await pool.connect();
+      try {
+        await sale.query('begin');
+        await sale.query('select 1 from properties where id = $1 for update', [propertyId]);
+        const reserving = wf.transfer(broker, id);
+        const waiting = async () =>
+          (
+            await pool.query<{ n: number }>(
+              `select count(*)::int as n from pg_stat_activity
+               where datname = current_database() and wait_event_type = 'Lock'`,
+            )
+          ).rows[0].n > 0;
+        for (let i = 0; i < 100 && !(await waiting()); i++)
+          await new Promise((r) => setTimeout(r, 20));
+        await sale.query(`update properties set availability = 'sold' where id = $1`, [
+          propertyId,
+        ]);
+        await sale.query(`update offers set state = 'unavailable' where id = $1`, [offerId]);
+        await sale.query('commit');
+        await expect(reserving).rejects.toThrow(/хотя бы одно доступное/);
+      } finally {
+        sale.release();
+      }
+      expect((await offerOf(id)).state).toBe('unavailable');
+      expect(await db.select().from(t.transfers).where(eq(t.transfers.requestId, id))).toEqual(
+        [],
+      );
+      expect(await stageOf(id)).not.toBe('crm');
+    });
   });
 
   describe('visibility of reference data', () => {
+    it('never tells a broker which partner is behind an offer', async () => {
+      const id = await approvedRequest();
+      await wf.sendOffers(partner, id, [propertyId]);
+      const { id: offerId } = await offerOf(id);
+      await wf.declineOffer(admin, offerId, 'Нет фото');
+      await wf.resubmitOffer(partner, offerId);
+      await wf.approveOffer(admin, offerId);
+
+      const detail = await lists.requestDetail(broker, id);
+      expect(detail.offers.map((o) => [o.companyId, o.rejectReason, o.reviewedAt])).toEqual([
+        ['', null, null],
+      ]);
+      expect(detail.properties.map((p) => p.companyId)).toEqual(['']);
+      const property = await lists.propertyDetail(broker, propertyId);
+      expect(property.properties[0].companyId).toBe('');
+      expect(property.offers.every((o) => o.companyId === '')).toBe(true);
+      // Filtering by company would reveal the owner, so it is ignored for brokers.
+      expect(
+        (await lists.propertiesFeed(broker, { ...PAGE, company: 'AM-3' })).items.map(
+          (p) => p.id,
+        ),
+      ).toEqual([propertyId]);
+
+      expect((await lists.requestDetail(partner, id)).offers[0].companyId).toBe('AM-2');
+      expect((await lists.requestDetail(admin, id)).offers[0].reviewedAt).not.toBeNull();
+    });
+
     it('gives brokers and partners only their own company', async () => {
       const ids = async (u: AuthUser) =>
         (await insights.bootstrap(u)).companies.map((c) => c.id);
