@@ -149,7 +149,7 @@ export class ReferenceSnapshot {
       clients: clients.map((c): ClientView => withoutCreatedAt(c)),
       requests: requests.map(toRequestView),
       properties: properties.map((p): PropertyView => withoutCreatedAt(p)),
-      offers: offers.map(toOfferView),
+      offers: offers.map((o) => toOfferView(user, o)),
       transfers: transfers.map(
         ({ soldPropertyId, ...tr }): TransferView => ({
           ...tr,

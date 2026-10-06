@@ -12,7 +12,7 @@ describe.skipIf(!process.env.DATABASE_URL)('Account blocking', () => {
   let admin: string[];
   let adminId: string;
   let broker: { id: string; companyId: string };
-  // A session started before the block; it should work again after unblock.
+  // A session started before the block; it must stay dead after unblock.
   let oldSession: string[];
 
   const block = (id: string, reason?: string, cookie = admin) =>
@@ -75,7 +75,18 @@ describe.skipIf(!process.env.DATABASE_URL)('Account blocking', () => {
   });
 
   it('cannot be bypassed by signing up again', async () => {
-    await t.signUp('broker').expect(409);
+    // Accepted like any sign-up so the form doesn't reveal the account, but not filed.
+    await t.signUp('broker').expect(202);
+    const pending = await t.db
+      .select({ id: registrationRequests.id })
+      .from(registrationRequests)
+      .where(
+        and(
+          eq(registrationRequests.email, t.email('broker')),
+          eq(registrationRequests.status, 'pending'),
+        ),
+      );
+    expect(pending).toHaveLength(0);
   });
 
   it('refuses blocking twice', async () => {
@@ -83,10 +94,11 @@ describe.skipIf(!process.env.DATABASE_URL)('Account blocking', () => {
     expect(res.body.message).toBe('Пользователь уже заблокирован');
   });
 
-  it('restores access on unblock, including the old session', async () => {
+  it('restores access on unblock, but not the old session', async () => {
     await unblock(broker.id).expect(200);
     await unblock(broker.id).expect(409);
-    await me(oldSession).expect(200);
+    const res = await me(oldSession).expect(401);
+    expect(res.body.code).toBeUndefined();
     await t.signIn('broker').expect(200);
   });
 

@@ -29,8 +29,13 @@ export class Env {
   @MinLength(32)
   JWT_SECRET: string;
 
+  /** Lifetime of broker/partner sessions. */
   @IsString()
   JWT_EXPIRES_IN = '7d';
+
+  /** Admin sessions are shorter-lived: they can see and change everything. */
+  @IsString()
+  ADMIN_JWT_EXPIRES_IN = '12h';
 
   /** Express `trust proxy` value, e.g. `1` behind one reverse proxy; rate limits key on the client IP. */
   @IsOptional()
@@ -58,5 +63,11 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       .join('\n');
     throw new Error(`Invalid environment configuration:\n${details}`);
   }
+  // `true` trusts the leftmost X-Forwarded-For, which the client writes, so
+  // anyone could pick their own IP and walk past the auth rate limits.
+  if (env.NODE_ENV === 'production' && env.TRUST_PROXY?.trim().toLowerCase() === 'true')
+    throw new Error(
+      'Invalid environment configuration:\nTRUST_PROXY: "true" lets clients spoof their IP; use the proxy hop count (e.g. 1) or its address',
+    );
   return env;
 }

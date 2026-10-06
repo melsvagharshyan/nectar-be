@@ -131,6 +131,8 @@ export const users = pgTable('users', {
     onDelete: 'set null',
   }),
   blockReason: text('block_reason'),
+  /** Embedded in every JWT; bumping it revokes all of the account's sessions. */
+  sessionVersion: integer('session_version').notNull().default(0),
   createdAt: createdAt(),
 });
 

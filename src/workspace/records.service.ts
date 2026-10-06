@@ -102,13 +102,18 @@ export class RecordsService {
       )
         throw new BadRequestException('Завершённый запрос нельзя изменить');
       this.assertRange(dto);
+      const values = this.requestValues(dto);
+      const changed = (Object.keys(values) as (keyof typeof values)[]).some(
+        (key) => JSON.stringify(values[key]) !== JSON.stringify(request[key]),
+      );
+      if (!changed) return;
       // A broker's edit to an approved request needs a fresh admin review,
       // which hides it from partners until then.
       const reReview = user.role === 'broker' && isOpenStage(request.stage);
       await tx
         .update(t.requests)
         .set({
-          ...this.requestValues(dto),
+          ...values,
           ...(reReview
             ? { stage: 'pending_review' as const, submittedAt: new Date() }
             : {}),

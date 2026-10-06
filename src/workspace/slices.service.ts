@@ -104,7 +104,9 @@ export class SlicesService {
       clients: clients.map((c) => toClientView(user, c)),
       requests: requests.map(toRequestView),
       properties: properties.map((p) => toPropertyView(user, p)),
-      offers: await this.withReservations(offers.map(toOfferView)),
+      offers: await this.withReservations(
+        offers.map((o) => toOfferView(user, o)),
+      ),
       transfers: this.scopeTransfers(user, transfers, offers, properties),
       drafts: draftMap,
       events: eventRows.map(toEventView),
@@ -119,7 +121,7 @@ export class SlicesService {
       .select()
       .from(t.offers)
       .where(and(inArray(t.offers.propertyId, ids), offerScope(user)));
-    return rows.map(toOfferView);
+    return rows.map((o) => toOfferView(user, o));
   }
 
   /**

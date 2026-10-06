@@ -1,14 +1,15 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { ConfigService } from '@nestjs/config';
+import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import type { Env } from '../config/env.js';
 import { DB, type Database } from '../database/database.module.js';
 import { isUniqueViolation } from '../database/errors.js';
 import {
@@ -17,11 +18,12 @@ import {
   registrationRequests,
   users,
 } from '../database/schema.js';
-import type {
-  IssuedSession,
-  JwtPayload,
-  SignUpResponse,
-  UserDto,
+import {
+  audienceFor,
+  type IssuedSession,
+  type JwtPayload,
+  type SignUpResponse,
+  type UserDto,
 } from './auth.types.js';
 import type {
   ChangePasswordDto,
@@ -29,6 +31,7 @@ import type {
   SignUpDto,
   UpdateProfileDto,
 } from './dto.js';
+import { LoginAttempts } from './login-attempts.js';
 import { hashPassword, verifyPassword } from './password.js';
 
 const DUMMY_HASH = hashPassword('dummy-password-for-timing');
@@ -41,18 +44,26 @@ export class AuthService {
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly jwt: JwtService,
+    private readonly config: ConfigService<Env, true>,
+    private readonly attempts: LoginAttempts,
   ) {}
 
+  /**
+   * Answers the same way whether or not the email is taken, so the form can't
+   * be used to find out who has an account or a pending application. A
+   * duplicate is simply not filed; its owner signs in with their existing
+   * password. The password is hashed on every path so timing doesn't tell either.
+   */
   async signUp(dto: SignUpDto): Promise<SignUpResponse> {
+    const accepted: SignUpResponse = { status: 'pending', email: dto.email };
+    // The hash is copied unchanged into `users` when an admin approves.
+    const passwordHash = await hashPassword(dto.password);
     const [existing] = await this.db
       .select({ id: users.id })
       .from(users)
       .where(eq(users.email, dto.email));
-    if (existing)
-      throw new ConflictException('Пользователь с таким email уже существует');
+    if (existing) return accepted;
 
-    // The hash is copied unchanged into `users` when an admin approves.
-    const passwordHash = await hashPassword(dto.password);
     try {
       await this.db.insert(registrationRequests).values({
         role: dto.role,
@@ -63,12 +74,13 @@ export class AuthService {
         companyName: dto.companyName,
       });
     } catch (e) {
-      // The partial unique index closes the double-submit race.
+      // An application is already pending (the partial unique index also
+      // closes the double-submit race).
       if (isUniqueViolation(e, 'registration_requests_pending_email_uq'))
-        throw new ConflictException('Заявка с этим email уже на рассмотрении');
+        return accepted;
       throw e;
     }
-    return { status: 'pending', email: dto.email };
+    return accepted;
   }
 
   /**
@@ -76,6 +88,13 @@ export class AuthService {
    * through `/auth/sign-in`; the wrong door looks like a wrong password.
    */
   async signIn(dto: SignInDto, asAdmin = false): Promise<IssuedSession> {
+    // Refused before any hashing, so a locked email costs no scrypt work.
+    this.attempts.assertAllowed(dto.email);
+    const wrongPassword = () => {
+      this.attempts.recordFailure(dto.email);
+      return invalidCredentials();
+    };
+
     const [user] = await this.db
       .select({
         id: users.id,
@@ -83,26 +102,28 @@ export class AuthService {
         passwordHash: users.passwordHash,
         blockedAt: users.blockedAt,
         blockReason: users.blockReason,
+        sessionVersion: users.sessionVersion,
       })
       .from(users)
       .where(eq(users.email, dto.email));
     if (user) {
       if (!(await verifyPassword(dto.password, user.passwordHash)))
-        throw invalidCredentials();
-      if ((user.role === 'admin') !== asAdmin) throw invalidCredentials();
+        throw wrongPassword();
+      if ((user.role === 'admin') !== asAdmin) throw wrongPassword();
       if (user.blockedAt)
         throw new ForbiddenException({
           message: 'Аккаунт заблокирован администратором',
           code: 'ACCOUNT_BLOCKED',
           reason: user.blockReason,
         });
-      return this.issue(await this.getUser(user.id));
+      this.attempts.reset(dto.email);
+      return this.issue(await this.getUser(user.id), user.sessionVersion);
     }
 
     // Applications are never for admins.
     if (asAdmin) {
       await verifyPassword(dto.password, await DUMMY_HASH);
-      throw invalidCredentials();
+      throw wrongPassword();
     }
 
     // No account yet: the status is revealed only for the right password.
@@ -126,7 +147,7 @@ export class AuthService {
       dto.password,
       application?.passwordHash ?? (await DUMMY_HASH),
     );
-    if (!application || !matches) throw invalidCredentials();
+    if (!application || !matches) throw wrongPassword();
     if (application.status === 'pending')
       throw new ForbiddenException({
         message:
@@ -165,7 +186,11 @@ export class AuthService {
     return this.getUser(id);
   }
 
-  async changePassword(id: string, dto: ChangePasswordDto): Promise<void> {
+  /**
+   * Revokes every session of the account, then issues a fresh one so the
+   * device that changed the password stays signed in.
+   */
+  async changePassword(id: string, dto: ChangePasswordDto): Promise<IssuedSession> {
     const [user] = await this.db
       .select({ passwordHash: users.passwordHash })
       .from(users)
@@ -175,10 +200,16 @@ export class AuthService {
       throw new BadRequestException('Текущий пароль указан неверно');
     if (dto.currentPassword === dto.newPassword)
       throw new BadRequestException('Новый пароль должен отличаться от текущего');
-    await this.db
+    const [updated] = await this.db
       .update(users)
-      .set({ passwordHash: await hashPassword(dto.newPassword) })
-      .where(eq(users.id, id));
+      .set({
+        passwordHash: await hashPassword(dto.newPassword),
+        sessionVersion: sql`${users.sessionVersion} + 1`,
+      })
+      .where(eq(users.id, id))
+      .returning({ sessionVersion: users.sessionVersion });
+    if (!updated) throw new NotFoundException('Пользователь не найден');
+    return this.issue(await this.getUser(id), updated.sessionVersion);
   }
 
   async getUser(id: string): Promise<UserDto> {
@@ -201,13 +232,14 @@ export class AuthService {
     return user;
   }
 
-  private async issue(user: UserDto): Promise<IssuedSession> {
-    const payload: JwtPayload = {
-      sub: user.id,
-      role: user.role,
-      companyId: user.companyId,
-    };
-    const token = await this.jwt.signAsync(payload);
+  private async issue(user: UserDto, sessionVersion: number): Promise<IssuedSession> {
+    const audience = audienceFor(user.role);
+    const expiresIn = this.config.get(
+      audience === 'admin' ? 'ADMIN_JWT_EXPIRES_IN' : 'JWT_EXPIRES_IN',
+    ) as NonNullable<JwtSignOptions['expiresIn']>;
+    // `aud` goes through the options: jsonwebtoken refuses it in both places.
+    const payload: Omit<JwtPayload, 'aud'> = { sub: user.id, sv: sessionVersion };
+    const token = await this.jwt.signAsync(payload, { audience, expiresIn });
     const { exp } = this.jwt.decode<{ exp: number }>(token);
     return { token, expiresAt: new Date(exp * 1000), user };
   }

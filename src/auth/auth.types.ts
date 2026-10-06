@@ -3,10 +3,21 @@ export type Role = 'broker' | 'partner' | 'admin';
 /** Roles that can apply through the public sign-up form. */
 export type SignUpRole = Exclude<Role, 'admin'>;
 
+/** Which sign-in door issued a session; a token from one never works as the other. */
+export type SessionAudience = 'admin' | 'cabinet';
+
+export const audienceFor = (role: Role): SessionAudience =>
+  role === 'admin' ? 'admin' : 'cabinet';
+
+/**
+ * Role and company are deliberately absent: the guard reads them from the DB
+ * on every request, so the token only identifies the account and the session.
+ */
 export interface JwtPayload {
   sub: string;
-  role: Role;
-  companyId: string | null;
+  /** Must equal `users.session_version`; bumping that revokes the token. */
+  sv: number;
+  aud: SessionAudience;
 }
 
 export interface AuthUser {

@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AuthUser } from '../auth/auth.types.js';
 import { DB, type Database } from '../database/database.module.js';
@@ -57,7 +57,14 @@ export class UsersService {
     // A single conditional update is atomic, so concurrent admins can't both win.
     const [updated] = await this.db
       .update(users)
-      .set({ blockedAt: new Date(), blockedBy: admin.id, blockReason: dto.reason })
+      // Bumping the version kills existing sessions for good, so unblocking
+      // needs a fresh sign-in instead of reviving a possibly stolen token.
+      .set({
+        blockedAt: new Date(),
+        blockedBy: admin.id,
+        blockReason: dto.reason,
+        sessionVersion: sql`${users.sessionVersion} + 1`,
+      })
       .where(
         and(
           eq(users.id, userId),

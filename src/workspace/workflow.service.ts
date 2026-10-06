@@ -319,6 +319,23 @@ export class WorkflowService {
           .where(inArray(t.properties.id, propertyIds))
           .orderBy(t.properties.id)
           .for('update');
+      // `ctx` was read before the locks: a sale or a partner's edit may have
+      // since made an offer unavailable or sent it back to review.
+      const fresh = propertyIds.length
+        ? await tx
+            .select({ offer: t.offers, availability: t.properties.availability })
+            .from(t.offers)
+            .innerJoin(t.properties, eq(t.properties.id, t.offers.propertyId))
+            .where(inArray(t.offers.id, booked.map((o) => o.id)))
+            .for('update', { of: t.offers })
+        : [];
+      const stillBooked = fresh
+        .filter(
+          ({ offer, availability }) =>
+            isOfferAvailable(offer, availability) &&
+            (SELECTED_OFFER_STATES as readonly string[]).includes(offer.state),
+        )
+        .map(({ offer }) => offer);
       const held = propertyIds.length
         ? await tx
             .select({ propertyId: t.offers.propertyId })
@@ -332,10 +349,10 @@ export class WorkflowService {
             )
         : [];
       const heldIds = new Set(held.map((h) => h.propertyId));
-      const selected = booked.filter((o) => !heldIds.has(o.propertyId));
+      const selected = stillBooked.filter((o) => !heldIds.has(o.propertyId));
       if (!selected.length)
         throw new BadRequestException(
-          booked.length
+          stillBooked.length
             ? 'Выбранные объекты уже зарезервированы по другим запросам'
             : 'Выберите хотя бы одно доступное предложение',
         );

@@ -56,8 +56,10 @@ export class AuthController {
     return this.startSession(res, await this.auth.signIn(dto));
   }
 
+  /** Stricter than the cabinet door: admin accounts are worth more to guess. */
   @Public()
   @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: minutes(1) } })
   @HttpCode(200)
   @Post('admin/sign-in')
   async adminSignIn(
@@ -84,10 +86,16 @@ export class AuthController {
     return this.auth.updateProfile(user.id, dto);
   }
 
+  /** Signs out every other device; this one gets a fresh cookie. */
   @HttpCode(204)
   @Post('password')
-  changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
-    return this.auth.changePassword(user.id, dto);
+  async changePassword(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { token, expiresAt } = await this.auth.changePassword(user.id, dto);
+    setSessionCookie(res, token, expiresAt, this.secureCookies);
   }
 
   private get secureCookies() {

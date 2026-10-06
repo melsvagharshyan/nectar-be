@@ -39,24 +39,32 @@ export const toRequestView = ({
   createdAt: iso(r.createdAt),
 });
 
+/** Brokers never learn which partner company is behind a property. */
 export function toPropertyView(
   user: AuthUser,
   { createdAt: _createdAt, ...p }: Row<typeof t.properties>,
 ): PropertyView {
   if (user.role !== 'broker') return p;
-  return { ...p, privateNotes: '', internalAddress: '' };
+  return { ...p, companyId: '', privateNotes: '', internalAddress: '' };
 }
 
-export const toOfferView = ({
-  closeReason,
-  reviewedBy: _reviewedBy,
-  ...o
-}: Row<typeof t.offers>): OfferView => ({
-  ...o,
-  ...(closeReason ? { closeReason } : {}),
-  reviewedAt: o.reviewedAt && iso(o.reviewedAt),
-  createdAt: iso(o.createdAt),
-});
+/**
+ * Brokers never learn which partner sent an offer, nor anything about the
+ * admin's review of it, which is between the admin and the partner.
+ */
+export function toOfferView(
+  user: AuthUser,
+  { closeReason, reviewedBy: _reviewedBy, ...o }: Row<typeof t.offers>,
+): OfferView {
+  const view: OfferView = {
+    ...o,
+    ...(closeReason ? { closeReason } : {}),
+    reviewedAt: o.reviewedAt && iso(o.reviewedAt),
+    createdAt: iso(o.createdAt),
+  };
+  if (user.role !== 'broker') return view;
+  return { ...view, companyId: '', rejectReason: null, reviewedAt: null };
+}
 
 export const toTransferView = ({
   soldPropertyId,
