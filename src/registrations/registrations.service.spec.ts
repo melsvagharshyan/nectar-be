@@ -16,6 +16,11 @@ describe.skipIf(!process.env.DATABASE_URL)('Sign-up approval', () => {
   let t: TestApp;
   let admin: string[];
 
+  const requestsFor = (local: string) =>
+    t.db
+      .select({ id: registrationRequests.id })
+      .from(registrationRequests)
+      .where(eq(registrationRequests.email, t.email(local)));
   const pendingId = async (local: string) => {
     const [row] = await t.db
       .select({ id: registrationRequests.id })
@@ -69,18 +74,20 @@ describe.skipIf(!process.env.DATABASE_URL)('Sign-up approval', () => {
     expect(company).toHaveLength(0);
   });
 
-  it('refuses a second request while one is pending, and allows one after rejection', async () => {
+  it('files only one request while one is pending, and allows one after rejection', async () => {
     await t.signUp('again').expect(202);
-    const dup = await t.signUp('again', 'partner').expect(409);
-    expect(dup.body.message).toBe('Заявка с этим email уже на рассмотрении');
+    // Accepted like any sign-up so the form doesn't reveal the application, but not filed.
+    await t.signUp('again', 'partner').expect(202);
+    expect(await requestsFor('again')).toHaveLength(1);
 
     await reject(await pendingId('again'), 'Неполные данные').expect(200);
     await t.signUp('again').expect(202);
   });
 
-  it('refuses sign-up with the email of an existing account', async () => {
-    const res = await t.signUp('admin').expect(409);
-    expect(res.body.message).toBe('Пользователь с таким email уже существует');
+  it('does not file sign-up for the email of an existing account', async () => {
+    const res = await t.signUp('admin').expect(202);
+    expect(res.body).toEqual({ status: 'pending', email: t.email('admin') });
+    expect(await requestsFor('admin')).toHaveLength(0);
   });
 
   it('refuses the admin role and a missing company name', async () => {

@@ -7,6 +7,7 @@ import type { Env } from '../config/env.js';
 import { AuthController } from './auth.controller.js';
 import { AuthGuard } from './auth.guard.js';
 import { AuthService } from './auth.service.js';
+import { LoginAttempts } from './login-attempts.js';
 
 @Module({
   imports: [
@@ -17,17 +18,19 @@ import { AuthService } from './auth.service.js';
     }),
     JwtModule.registerAsync({
       inject: [ConfigService],
+      // Lifetime and audience depend on the role, so `AuthService.issue` sets them.
       useFactory: (config: ConfigService<Env, true>): JwtModuleOptions => ({
         secret: config.get('JWT_SECRET'),
-        signOptions: {
-          expiresIn: config.get('JWT_EXPIRES_IN') as NonNullable<
-            JwtModuleOptions['signOptions']
-          >['expiresIn'],
-        },
+        signOptions: { algorithm: 'HS256' },
+        verifyOptions: { algorithms: ['HS256'] },
       }),
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, { provide: APP_GUARD, useClass: AuthGuard }],
+  providers: [
+    AuthService,
+    LoginAttempts,
+    { provide: APP_GUARD, useClass: AuthGuard },
+  ],
 })
 export class AuthModule {}
