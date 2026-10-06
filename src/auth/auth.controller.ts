@@ -64,11 +64,7 @@ export class AuthController {
     @Body() dto: SignInDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponse> {
-<<<<<<< Updated upstream
     return this.startSession(res, await this.auth.signIn(dto, true));
-=======
-    return this.startSession(res, await this.auth.signInAdmin(dto));
->>>>>>> Stashed changes
   }
 
   @Public()

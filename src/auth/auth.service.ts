@@ -140,32 +140,6 @@ export class AuthService {
     });
   }
 
-  /** Non-admins get the same error as a wrong password, so the page doesn't reveal who is an admin. */
-  async signInAdmin(dto: SignInDto): Promise<IssuedSession> {
-    const [user] = await this.db
-      .select({
-        id: users.id,
-        role: users.role,
-        passwordHash: users.passwordHash,
-        blockedAt: users.blockedAt,
-        blockReason: users.blockReason,
-      })
-      .from(users)
-      .where(eq(users.email, dto.email));
-    const matches = await verifyPassword(
-      dto.password,
-      user?.passwordHash ?? (await DUMMY_HASH),
-    );
-    if (!user || !matches || user.role !== 'admin') throw invalidCredentials();
-    if (user.blockedAt)
-      throw new ForbiddenException({
-        message: 'Аккаунт заблокирован администратором',
-        code: 'ACCOUNT_BLOCKED',
-        reason: user.blockReason,
-      });
-    return this.issue(await this.getUser(user.id));
-  }
-
   async updateProfile(id: string, dto: UpdateProfileDto): Promise<UserDto> {
     const changes = {
       ...(dto.name !== undefined && { name: dto.name }),
