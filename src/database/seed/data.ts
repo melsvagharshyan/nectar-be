@@ -1,17 +1,32 @@
 import type { PhotoKey, PortraitKey } from './images.js';
 
-/** Real accounts that already exist; the seed only adds data around them. */
+/**
+ * Real accounts' companies; the seed only adds data around them. On a fresh database
+ * they don't exist yet, so the seed creates these stand-ins (real rows are kept).
+ */
 export const OWN = {
   broker: { companyId: 'RF-100', employeeId: 'RF-100-E01' },
-  partner: { companyId: 'AM-101' },
+  partner: { companyId: 'AM-101', employeeId: 'AM-101-E01' },
 } as const;
+
+export const OWN_COMPANIES: { id: string; kind: CompanyKind; name: string; contact: string }[] = [
+  { id: OWN.broker.companyId, kind: 'rf', name: 'Своё агентство (РФ)', contact: 'Москва' },
+  { id: OWN.partner.companyId, kind: 'am', name: 'Своё агентство (AM)', contact: 'Ереван' },
+];
+
+export const OWN_OWNERS: { id: string; companyId: string; name: string; phone: string }[] = [
+  { id: OWN.broker.employeeId, companyId: OWN.broker.companyId, name: 'Владелец агентства', phone: '' },
+  { id: OWN.partner.employeeId, companyId: OWN.partner.companyId, name: 'Владелец агентства', phone: '' },
+];
 
 export const DEMO_PASSWORD = 'demo12345';
 
 type CompanyKind = 'rf' | 'am';
 type OfferState = 'sent' | 'interested' | 'transferred' | 'closed' | 'unavailable';
-type EventType = 'offers_sent' | 'interest' | 'transferred' | 'returned' | 'sold' | 'started';
-type Stage = 'created' | 'in_progress' | 'has_offers' | 'crm' | 'sold';
+type EventType =
+  | 'offers_sent' | 'interest' | 'transferred' | 'returned' | 'sold' | 'started'
+  | 'request_submitted' | 'request_rejected' | 'offer_submitted' | 'offer_rejected';
+type Stage = 'created' | 'pending_review' | 'rejected' | 'in_progress' | 'has_offers' | 'crm' | 'sold';
 
 export const COMPANIES: { id: string; kind: CompanyKind; name: string; contact: string }[] = [
   { id: 'RF-1', kind: 'rf', name: 'Nord Realty', contact: 'Москва · +7 495 120-44-10' },
@@ -39,13 +54,6 @@ export const USERS: {
   { email: 'ararat.partner@example.com', role: 'partner', employeeId: 'AM-2-E01', avatar: 'manBeard' },
   { email: 'cascade.partner@example.com', role: 'partner', employeeId: 'AM-3-E01', avatar: 'womanDark' },
 ];
-
-export const ADMIN_USER = {
-  email: 'admin.demo@example.com',
-  name: 'Мария Ковалёва',
-  phone: '+7 916 555-12-40',
-  avatar: 'womanCurly',
-} as const satisfies { email: string; name: string; phone: string; avatar: PortraitKey };
 
 export const CLIENTS: {
   id: string;
@@ -228,6 +236,9 @@ export interface SeedOffer {
   state: OfferState;
   disposition?: 'neutral' | 'rejected';
   closeReason?: 'sold' | 'not_selected';
+  /** Admin review; seeded offers are approved unless stated. */
+  review?: 'pending' | 'rejected';
+  rejectReason?: string;
   daysAgo: number;
 }
 
@@ -252,6 +263,7 @@ export interface SeedRequest {
   view: string;
   amenities: string[];
   daysAgo: number;
+  rejectReason?: string;
   offers: SeedOffer[];
   transfer?: { id: string; state: 'demo_transferred' | 'sold'; offerIds: string[]; soldPropertyId?: string; daysAgo: number };
   drafts?: { propertyId: string; companyId: string }[];
@@ -289,6 +301,12 @@ export const REQUESTS: SeedRequest[] = [
       { id: 'OF-2', propertyId: 'BR-2', state: 'sent', daysAgo: 8 },
       { id: 'OF-3', propertyId: 'BR-8', state: 'sent', daysAgo: 7 },
       { id: 'OF-4', propertyId: 'BR-11', state: 'sent', disposition: 'rejected', daysAgo: 6 },
+      // Waiting for admin review: the broker doesn't see these yet.
+      { id: 'OF-12', propertyId: 'BR-10', state: 'sent', review: 'pending', daysAgo: 0.5 },
+      {
+        id: 'OF-13', propertyId: 'BR-5', state: 'sent', review: 'rejected', daysAgo: 2,
+        rejectReason: 'Добавьте фото кухни и санузла, укажите год постройки дома.',
+      },
     ],
     events: [
       { type: 'started', daysAgo: 9 },
@@ -296,6 +314,9 @@ export const REQUESTS: SeedRequest[] = [
       { type: 'offers_sent', daysAgo: 7 },
       { type: 'offers_sent', daysAgo: 6 },
       { type: 'interest', daysAgo: 5, propertyId: 'BR-1' },
+      { type: 'offer_submitted', daysAgo: 2, propertyId: 'BR-5' },
+      { type: 'offer_rejected', daysAgo: 1.5, propertyId: 'BR-5' },
+      { type: 'offer_submitted', daysAgo: 0.5, propertyId: 'BR-10' },
     ],
   },
   {
@@ -367,6 +388,29 @@ export const REQUESTS: SeedRequest[] = [
       { type: 'offers_sent', daysAgo: 4 },
       { type: 'offers_sent', daysAgo: 3 },
       { type: 'interest', daysAgo: 1, propertyId: 'BR-10' },
+    ],
+  },
+  {
+    id: 'CR-8', clientId: 'C-1', stage: 'pending_review', type: 'Студия', districts: ['Кентрон'],
+    budgetMin: 60000, budgetMax: 90000, areaMin: 25, areaMax: 40, rooms: 0,
+    goal: 'Для студента', term: 'До месяца', market: 'Не важно', repair: 'Готовый', furniture: 'С мебелью',
+    parking: 'Не важно', view: 'Не важно', amenities: ['Рядом метро'],
+    notes: 'Студия для дочери на время учёбы в университете, желательно в пешей доступности от центра.',
+    daysAgo: 0.4, offers: [],
+    events: [{ type: 'request_submitted', daysAgo: 0.3 }],
+  },
+  {
+    id: 'CR-9', clientId: 'C-2', stage: 'rejected', type: 'Дом', districts: [],
+    budgetMin: 0, budgetMax: 400000, areaMin: 0, areaMax: 0, rooms: null,
+    goal: 'Для проживания', term: 'Не важно', market: 'Не важно', repair: 'Не важно', furniture: 'Не важно',
+    parking: 'Не важно', view: 'Не важно', amenities: [],
+    notes: 'Дом за городом.',
+    daysAgo: 3,
+    rejectReason: 'Укажите районы, площадь и количество комнат — без них партнёры не смогут подобрать варианты.',
+    offers: [],
+    events: [
+      { type: 'request_submitted', daysAgo: 2.9 },
+      { type: 'request_rejected', daysAgo: 2.5 },
     ],
   },
 ];

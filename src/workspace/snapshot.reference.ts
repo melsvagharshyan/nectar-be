@@ -3,13 +3,12 @@ import { asc, eq } from 'drizzle-orm';
 import type { AuthUser } from '../auth/auth.types.js';
 import { DB, type Database } from '../database/database.module.js';
 import * as t from '../database/schema.js';
-import { canSeeRequest, isEventVisible } from './rules.js';
+import { toOfferView, toRequestView } from './mappers.js';
+import { canSeeOffer, canSeeRequest, isEventVisible } from './rules.js';
 import type {
   ClientView,
   EventView,
-  OfferView,
   PropertyView,
-  RequestView,
   TransferView,
   WorkspaceState,
 } from './workspace.types.js';
@@ -52,7 +51,9 @@ export class ReferenceSnapshot {
     );
 
     if (user.role === 'broker') {
-      const offers = full.offers.filter((o) => requestIds.has(o.requestId));
+      const offers = full.offers.filter(
+        (o) => requestIds.has(o.requestId) && canSeeOffer(user, o),
+      );
       const offered = new Set(offers.map((o) => o.propertyId));
       return {
         ...full,
@@ -61,7 +62,7 @@ export class ReferenceSnapshot {
         requests,
         offers,
         properties: full.properties
-          .filter((p) => p.availability === 'active' || offered.has(p.id))
+          .filter((p) => offered.has(p.id))
           .map((p) => ({ ...p, privateNotes: '', internalAddress: '' })),
         transfers: full.transfers.filter((tr) => requestIds.has(tr.requestId)),
         drafts: {},
@@ -99,6 +100,7 @@ export class ReferenceSnapshot {
             tr.soldPropertyId && ownPropertyIds.has(tr.soldPropertyId)
               ? tr.soldPropertyId
               : undefined,
+          returnReason: null,
         })),
       drafts: Object.fromEntries(
         Object.entries(full.drafts).filter(([id]) => requestIds.has(id)),
@@ -145,17 +147,9 @@ export class ReferenceSnapshot {
       companies: companies.map(withoutCreatedAt),
       employees,
       clients: clients.map((c): ClientView => withoutCreatedAt(c)),
-      requests: requests.map(
-        (r): RequestView => ({ ...r, createdAt: iso(r.createdAt) }),
-      ),
+      requests: requests.map(toRequestView),
       properties: properties.map((p): PropertyView => withoutCreatedAt(p)),
-      offers: offers.map(
-        ({ closeReason, ...o }): OfferView => ({
-          ...o,
-          ...(closeReason ? { closeReason } : {}),
-          createdAt: iso(o.createdAt),
-        }),
-      ),
+      offers: offers.map(toOfferView),
       transfers: transfers.map(
         ({ soldPropertyId, ...tr }): TransferView => ({
           ...tr,

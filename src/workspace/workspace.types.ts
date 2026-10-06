@@ -1,6 +1,8 @@
 /** Mirrors the workspace types in nectar-estate-ui (`src/demo/types.ts`). */
 export type RequestStage =
   | 'created'
+  | 'pending_review'
+  | 'rejected'
   | 'in_progress'
   | 'has_offers'
   | 'crm'
@@ -12,6 +14,7 @@ export type OfferState =
   | 'transferred'
   | 'closed'
   | 'unavailable';
+export type OfferReview = 'pending' | 'approved' | 'rejected';
 
 export interface CompanyView {
   id: string;
@@ -58,6 +61,10 @@ export interface RequestView {
   parking: string;
   view: string;
   amenities: string[];
+  submittedAt: string | null;
+  /** Admin's reason for the latest rejection; cleared on resubmit. */
+  rejectReason: string | null;
+  reviewedAt: string | null;
   createdAt: string;
 }
 
@@ -99,6 +106,12 @@ export interface OfferView {
   disposition: 'neutral' | 'rejected';
   closeReason?: 'sold' | 'not_selected';
   matchScore: number;
+  review: OfferReview;
+  /** Its property is held by another request's active reservation. */
+  reservedElsewhere?: boolean;
+  /** Admin's reason for the latest rejection; cleared on resubmit. */
+  rejectReason: string | null;
+  reviewedAt: string | null;
   createdAt: string;
 }
 
@@ -108,6 +121,8 @@ export interface TransferView {
   offerIds: string[];
   state: 'demo_transferred' | 'returned' | 'sold';
   soldPropertyId?: string;
+  /** Admin's reason for returning it; the broker sees it, partners don't. */
+  returnReason: string | null;
   createdAt: string;
 }
 
@@ -119,7 +134,12 @@ export interface EventView {
     | 'transferred'
     | 'returned'
     | 'sold'
-    | 'started';
+    | 'started'
+    | 'request_submitted'
+    | 'request_approved'
+    | 'request_rejected'
+    | 'offer_submitted'
+    | 'offer_rejected';
   requestId: string;
   propertyId?: string;
   createdAt: string;

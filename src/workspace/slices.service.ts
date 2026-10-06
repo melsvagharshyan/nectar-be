@@ -13,6 +13,7 @@ import {
 } from './mappers.js';
 import { eventScope, offerScope, requestScope } from './scope.js';
 import type { Slice } from './lists.types.js';
+import type { OfferView } from './workspace.types.js';
 
 export const emptySlice = (): Slice => ({
   clients: [],
@@ -103,7 +104,7 @@ export class SlicesService {
       clients: clients.map((c) => toClientView(user, c)),
       requests: requests.map(toRequestView),
       properties: properties.map((p) => toPropertyView(user, p)),
-      offers: offers.map(toOfferView),
+      offers: await this.withReservations(offers.map(toOfferView)),
       transfers: this.scopeTransfers(user, transfers, offers, properties),
       drafts: draftMap,
       events: eventRows.map(toEventView),
@@ -119,6 +120,30 @@ export class SlicesService {
       .from(t.offers)
       .where(and(inArray(t.offers.propertyId, ids), offerScope(user)));
     return rows.map(toOfferView);
+  }
+
+  /**
+   * Flags offers whose property is held by another request's active
+   * reservation, so the broker can't reserve it too. Only exposes a boolean.
+   */
+  async withReservations(offers: OfferView[]): Promise<OfferView[]> {
+    const propertyIds = unique(offers.map((o) => o.propertyId));
+    if (!propertyIds.length) return offers;
+    const held = await this.db
+      .select({ requestId: t.offers.requestId, propertyId: t.offers.propertyId })
+      .from(t.offers)
+      .where(
+        and(
+          inArray(t.offers.propertyId, propertyIds),
+          eq(t.offers.state, 'transferred'),
+        ),
+      );
+    return offers.map((o) => ({
+      ...o,
+      reservedElsewhere: held.some(
+        (h) => h.propertyId === o.propertyId && h.requestId !== o.requestId,
+      ),
+    }));
   }
 
   private scopeTransfers(
@@ -144,6 +169,7 @@ export class SlicesService {
             tr.soldPropertyId && ownProperties.has(tr.soldPropertyId)
               ? tr.soldPropertyId
               : null,
+          returnReason: null,
         }),
       );
   }

@@ -12,6 +12,7 @@ import {
   type Database,
   type Transaction,
 } from '../database/database.module.js';
+import { COMPANY_PREFIX } from '../database/companies.js';
 import { nextId } from '../database/ids.js';
 import * as t from '../database/schema.js';
 import type {
@@ -21,11 +22,9 @@ import type {
   PropertyDto,
   RequestDto,
 } from './records.dto.js';
-import { isOpenStage } from './rules.js';
+import { isOpenStage, matchScore, UNAPPROVED_STAGES } from './rules.js';
 import type { MutationResult } from './lists.types.js';
 import { WorkflowService } from './workflow.service.js';
-
-const COMPANY_PREFIX = { rf: 'RF', am: 'AM' } as const;
 
 function propertyTitle({ type, rooms, area }: PropertyDto) {
   const kind =
@@ -97,13 +96,27 @@ export class RecordsService {
         .for('update');
       if (!request) throw new NotFoundException('Запрос не найден');
       await this.ownClient(tx, user, request.clientId);
-      if (request.stage !== 'created' && !isOpenStage(request.stage))
+      if (
+        !UNAPPROVED_STAGES.includes(request.stage) &&
+        !isOpenStage(request.stage)
+      )
         throw new BadRequestException('Завершённый запрос нельзя изменить');
       this.assertRange(dto);
+      // A broker's edit to an approved request needs a fresh admin review,
+      // which hides it from partners until then.
+      const reReview = user.role === 'broker' && isOpenStage(request.stage);
       await tx
         .update(t.requests)
-        .set(this.requestValues(dto))
+        .set({
+          ...this.requestValues(dto),
+          ...(reReview
+            ? { stage: 'pending_review' as const, submittedAt: new Date() }
+            : {}),
+        })
         .where(eq(t.requests.id, request.id));
+      if (reReview)
+        await this.workflow.addEvent(tx, 'request_submitted', request.id);
+      await this.refreshMatchScores(tx, request.id);
     });
   }
 
@@ -142,7 +155,33 @@ export class RecordsService {
       if (values.availability !== 'active') {
         await tx.delete(t.drafts).where(eq(t.drafts.propertyId, property.id));
       }
-      if (values.availability !== property.availability) {
+      // Brokers saw the approved version, so a partner's change needs a fresh
+      // review. Offers already in a CRM transfer or closed keep their approval.
+      const changed = (Object.keys(values) as (keyof typeof values)[]).some(
+        (key) => JSON.stringify(values[key]) !== JSON.stringify(property[key]),
+      );
+      const reReviewed =
+        user.role === 'partner' && changed
+          ? await tx
+              .update(t.offers)
+              .set({ review: 'pending' })
+              .where(
+                and(
+                  eq(t.offers.propertyId, property.id),
+                  eq(t.offers.review, 'approved'),
+                  inArray(t.offers.state, ['sent', 'interested']),
+                ),
+              )
+              .returning({ requestId: t.offers.requestId })
+          : [];
+      for (const offer of reReviewed)
+        await this.workflow.addEvent(
+          tx,
+          'offer_submitted',
+          offer.requestId,
+          property.id,
+        );
+      if (values.availability !== property.availability || reReviewed.length) {
         const affected = tx
           .select({ id: t.offers.requestId })
           .from(t.offers)
@@ -263,6 +302,25 @@ export class RecordsService {
     )
       throw new NotFoundException('Клиент не найден');
     return client;
+  }
+
+  /** Offers keep a fit score; it follows the request's latest criteria. */
+  private async refreshMatchScores(tx: Transaction, requestId: string) {
+    const [request] = await tx
+      .select()
+      .from(t.requests)
+      .where(eq(t.requests.id, requestId));
+    const offers = await tx
+      .select({ id: t.offers.id, property: t.properties })
+      .from(t.offers)
+      .innerJoin(t.properties, eq(t.properties.id, t.offers.propertyId))
+      .where(eq(t.offers.requestId, requestId));
+    for (const offer of offers) {
+      await tx
+        .update(t.offers)
+        .set({ matchScore: matchScore(request, offer.property) })
+        .where(eq(t.offers.id, offer.id));
+    }
   }
 
   private assertRange(dto: RequestDto) {

@@ -155,6 +155,7 @@ async function generate(db: Database) {
           companyId: property.companyId,
           state: 'sent',
           matchScore: int(40, 100),
+          review: 'approved',
           createdAt: at,
         };
       },

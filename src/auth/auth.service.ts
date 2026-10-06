@@ -7,15 +7,22 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { eq } from 'drizzle-orm';
-import { timingSafeEqual } from 'node:crypto';
-import type { Env } from '../config/env.js';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DB, type Database } from '../database/database.module.js';
-import { nextId } from '../database/ids.js';
-import { companies, companyIdSeq, employees, users } from '../database/schema.js';
-import type { IssuedSession, JwtPayload, UserDto } from './auth.types.js';
+import { isUniqueViolation } from '../database/errors.js';
+import {
+  companies,
+  employees,
+  registrationRequests,
+  users,
+} from '../database/schema.js';
+import type {
+  IssuedSession,
+  JwtPayload,
+  SignUpResponse,
+  UserDto,
+} from './auth.types.js';
 import type {
   ChangePasswordDto,
   SignInDto,
@@ -24,30 +31,19 @@ import type {
 } from './dto.js';
 import { hashPassword, verifyPassword } from './password.js';
 
-const COMPANY_KIND = { broker: 'rf', partner: 'am' } as const;
-const COMPANY_PREFIX = { broker: 'RF', partner: 'AM' } as const;
+const DUMMY_HASH = hashPassword('dummy-password-for-timing');
 
-const safeEqual = (a: string, b: string) => {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  return left.length === right.length && timingSafeEqual(left, right);
-};
+const invalidCredentials = () =>
+  new UnauthorizedException('Неверный email или пароль');
 
 @Injectable()
 export class AuthService {
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly jwt: JwtService,
-    private readonly config: ConfigService<Env, true>,
   ) {}
 
-  async signUp(dto: SignUpDto): Promise<IssuedSession> {
-    if (
-      dto.role === 'admin' &&
-      !safeEqual(dto.adminCode ?? '', this.config.get('ADMIN_SIGNUP_CODE'))
-    )
-      throw new ForbiddenException('Неверный код администратора');
-
+  async signUp(dto: SignUpDto): Promise<SignUpResponse> {
     const [existing] = await this.db
       .select({ id: users.id })
       .from(users)
@@ -55,50 +51,118 @@ export class AuthService {
     if (existing)
       throw new ConflictException('Пользователь с таким email уже существует');
 
+    // The hash is copied unchanged into `users` when an admin approves.
     const passwordHash = await hashPassword(dto.password);
-    const phone = dto.phone ?? '';
-
-    const userId = await this.db.transaction(async (tx) => {
-      let companyId: string | null = null;
-      let employeeId: string | null = null;
-      if (dto.role !== 'admin') {
-        companyId = await nextId(tx, COMPANY_PREFIX[dto.role], companyIdSeq);
-        employeeId = `${companyId}-E01`;
-        await tx.insert(companies).values({
-          id: companyId,
-          kind: COMPANY_KIND[dto.role],
-          name: dto.companyName!,
-          contact: dto.email,
-        });
-        await tx
-          .insert(employees)
-          .values({ id: employeeId, companyId, name: dto.name, phone });
-      }
-      const [user] = await tx
-        .insert(users)
-        .values({
-          email: dto.email,
-          passwordHash,
-          role: dto.role,
-          name: dto.name,
-          phone,
-          companyId,
-          employeeId,
-        })
-        .returning({ id: users.id });
-      return user.id;
-    });
-
-    return this.issue(await this.getUser(userId));
+    try {
+      await this.db.insert(registrationRequests).values({
+        role: dto.role,
+        email: dto.email,
+        passwordHash,
+        name: dto.name,
+        phone: dto.phone ?? '',
+        companyName: dto.companyName,
+      });
+    } catch (e) {
+      // The partial unique index closes the double-submit race.
+      if (isUniqueViolation(e, 'registration_requests_pending_email_uq'))
+        throw new ConflictException('Заявка с этим email уже на рассмотрении');
+      throw e;
+    }
+    return { status: 'pending', email: dto.email };
   }
 
-  async signIn(dto: SignInDto): Promise<IssuedSession> {
+  /**
+   * Admins sign in only through `/auth/admin/sign-in`, everyone else only
+   * through `/auth/sign-in`; the wrong door looks like a wrong password.
+   */
+  async signIn(dto: SignInDto, asAdmin = false): Promise<IssuedSession> {
     const [user] = await this.db
-      .select({ id: users.id, passwordHash: users.passwordHash })
+      .select({
+        id: users.id,
+        role: users.role,
+        passwordHash: users.passwordHash,
+        blockedAt: users.blockedAt,
+        blockReason: users.blockReason,
+      })
       .from(users)
       .where(eq(users.email, dto.email));
-    if (!user || !(await verifyPassword(dto.password, user.passwordHash)))
-      throw new UnauthorizedException('Неверный email или пароль');
+    if (user) {
+      if (!(await verifyPassword(dto.password, user.passwordHash)))
+        throw invalidCredentials();
+      if ((user.role === 'admin') !== asAdmin) throw invalidCredentials();
+      if (user.blockedAt)
+        throw new ForbiddenException({
+          message: 'Аккаунт заблокирован администратором',
+          code: 'ACCOUNT_BLOCKED',
+          reason: user.blockReason,
+        });
+      return this.issue(await this.getUser(user.id));
+    }
+
+    // Applications are never for admins.
+    if (asAdmin) {
+      await verifyPassword(dto.password, await DUMMY_HASH);
+      throw invalidCredentials();
+    }
+
+    // No account yet: the status is revealed only for the right password.
+    const [application] = await this.db
+      .select({
+        status: registrationRequests.status,
+        passwordHash: registrationRequests.passwordHash,
+        rejectReason: registrationRequests.rejectReason,
+      })
+      .from(registrationRequests)
+      .where(
+        and(
+          eq(registrationRequests.email, dto.email),
+          inArray(registrationRequests.status, ['pending', 'rejected']),
+        ),
+      )
+      .orderBy(desc(registrationRequests.createdAt))
+      .limit(1);
+    // Hash against a dummy when nothing matches so timing doesn't leak emails.
+    const matches = await verifyPassword(
+      dto.password,
+      application?.passwordHash ?? (await DUMMY_HASH),
+    );
+    if (!application || !matches) throw invalidCredentials();
+    if (application.status === 'pending')
+      throw new ForbiddenException({
+        message:
+          'Ваша заявка на рассмотрении. Мы откроем доступ после проверки администратором.',
+        code: 'REGISTRATION_PENDING',
+      });
+    throw new ForbiddenException({
+      message: 'Заявка на регистрацию отклонена',
+      code: 'REGISTRATION_REJECTED',
+      reason: application.rejectReason,
+    });
+  }
+
+  /** Non-admins get the same error as a wrong password, so the page doesn't reveal who is an admin. */
+  async signInAdmin(dto: SignInDto): Promise<IssuedSession> {
+    const [user] = await this.db
+      .select({
+        id: users.id,
+        role: users.role,
+        passwordHash: users.passwordHash,
+        blockedAt: users.blockedAt,
+        blockReason: users.blockReason,
+      })
+      .from(users)
+      .where(eq(users.email, dto.email));
+    const matches = await verifyPassword(
+      dto.password,
+      user?.passwordHash ?? (await DUMMY_HASH),
+    );
+    if (!user || !matches || user.role !== 'admin') throw invalidCredentials();
+    if (user.blockedAt)
+      throw new ForbiddenException({
+        message: 'Аккаунт заблокирован администратором',
+        code: 'ACCOUNT_BLOCKED',
+        reason: user.blockReason,
+      });
     return this.issue(await this.getUser(user.id));
   }
 

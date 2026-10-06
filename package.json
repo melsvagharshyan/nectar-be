@@ -23,7 +23,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/database/seed/index.ts",
-    "db:seed:bulk": "tsx src/database/seed/bulk.ts"
+    "db:seed:bulk": "tsx src/database/seed/bulk.ts",
+    "admin:create": "tsx src/database/admin.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.0.1",
@@ -31,6 +32,7 @@
     "@nestjs/core": "^12.0.1",
     "@nestjs/jwt": "^12.0.2",
     "@nestjs/platform-express": "^12.0.1",
+    "@nestjs/throttler": "^6.7.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cloudinary": "^2.11.0",

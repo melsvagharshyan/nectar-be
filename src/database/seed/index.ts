@@ -1,16 +1,17 @@
 import { existsSync } from 'node:fs';
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import pg from 'pg';
 import { hashPassword } from '../../auth/password.js';
 import { matchScore } from '../../workspace/rules.js';
 import { createDatabase, type Transaction } from '../database.module.js';
 import * as t from '../schema.js';
 import {
-  ADMIN_USER,
   CLIENTS,
   COMPANIES,
   DEMO_PASSWORD,
   EMPLOYEES,
+  OWN_COMPANIES,
+  OWN_OWNERS,
   PROPERTIES,
   REQUESTS,
   USERS,
@@ -38,14 +39,28 @@ const propertyById = new Map(PROPERTIES.map((p) => [p.id, p]));
 
 /** Removes everything a previous seed run created; the real accounts and their records stay. */
 async function clear(tx: Transaction) {
-  await tx
-    .delete(t.users)
-    .where(inArray(t.users.email, [...USERS.map((u) => u.email), ADMIN_USER.email]));
+  await tx.delete(t.users).where(inArray(t.users.email, USERS.map((u) => u.email)));
   await tx.delete(t.requests).where(inArray(t.requests.id, REQUESTS.map((r) => r.id)));
   await tx.delete(t.properties).where(inArray(t.properties.id, PROPERTIES.map((p) => p.id)));
   await tx.delete(t.clients).where(inArray(t.clients.id, CLIENTS.map((c) => c.id)));
   await tx.delete(t.employees).where(inArray(t.employees.id, EMPLOYEES.map((e) => e.id)));
   await tx.delete(t.companies).where(inArray(t.companies.id, COMPANIES.map((c) => c.id)));
+}
+
+/**
+ * The demo data hangs off RF-100 / AM-101, which normally are the first approved
+ * sign-ups. Creates stand-ins when missing and keeps the id sequence past them,
+ * so a later approval can't be handed the same id.
+ */
+async function ensureOwnCompanies(tx: Transaction) {
+  await tx
+    .insert(t.companies)
+    .values(OWN_COMPANIES.map((c) => ({ ...c, createdAt: daysAgo(30) })))
+    .onConflictDoNothing();
+  await tx.insert(t.employees).values(OWN_OWNERS).onConflictDoNothing();
+  await tx.execute(
+    sql`select setval('company_id_seq', greatest((select last_value from company_id_seq), 101))`,
+  );
 }
 
 async function main() {
@@ -59,6 +74,7 @@ async function main() {
 
   await db.transaction(async (tx) => {
     await clear(tx);
+    await ensureOwnCompanies(tx);
 
     await tx.insert(t.companies).values(
       COMPANIES.map((c) => ({ ...c, createdAt: daysAgo(30) })),
@@ -80,15 +96,6 @@ async function main() {
         };
       }),
     );
-    await tx.insert(t.users).values({
-      email: ADMIN_USER.email,
-      passwordHash,
-      role: 'admin',
-      name: ADMIN_USER.name,
-      phone: ADMIN_USER.phone,
-      avatarUrl: images.portrait[ADMIN_USER.avatar],
-      createdAt: daysAgo(30),
-    });
     await tx.insert(t.clients).values(
       CLIENTS.map((c, i) => ({
         id: c.id,
@@ -114,7 +121,12 @@ async function main() {
 
     for (const r of REQUESTS) {
       const { offers, transfer, drafts, events: _events, daysAgo: age, ...request } = r;
-      await tx.insert(t.requests).values({ ...request, createdAt: daysAgo(age) });
+      await tx.insert(t.requests).values({
+        ...request,
+        // Everything past a draft went through admin review.
+        submittedAt: request.stage === 'created' ? null : daysAgo(age),
+        createdAt: daysAgo(age),
+      });
       for (const o of offers) {
         const property = propertyById.get(o.propertyId)!;
         await tx.insert(t.offers).values({
@@ -126,6 +138,8 @@ async function main() {
           disposition: o.disposition ?? 'neutral',
           closeReason: o.closeReason ?? null,
           matchScore: matchScore(r, property),
+          review: o.review ?? 'approved',
+          rejectReason: o.rejectReason ?? null,
           createdAt: daysAgo(o.daysAgo),
         });
       }
@@ -160,7 +174,7 @@ async function main() {
   console.log(
     `Seeded ${COMPANIES.length} companies, ${CLIENTS.length} clients, ${PROPERTIES.length} properties, ${REQUESTS.length} requests.`,
   );
-  console.log(`Demo logins (password "${DEMO_PASSWORD}"): ${[...USERS.map((u) => u.email), ADMIN_USER.email].join(', ')}`);
+  console.log(`Demo logins (password "${DEMO_PASSWORD}"): ${USERS.map((u) => u.email).join(', ')}`);
 }
 
 main().catch((error: unknown) => {

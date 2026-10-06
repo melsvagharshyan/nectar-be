@@ -29,8 +29,13 @@ export function toClientView(
   return { ...c, name: `Клиент ${c.publicId}`, phone: '', email: '' };
 }
 
-export const toRequestView = (r: Row<typeof t.requests>): RequestView => ({
+export const toRequestView = ({
+  reviewedBy: _reviewedBy,
+  ...r
+}: Row<typeof t.requests>): RequestView => ({
   ...r,
+  submittedAt: r.submittedAt && iso(r.submittedAt),
+  reviewedAt: r.reviewedAt && iso(r.reviewedAt),
   createdAt: iso(r.createdAt),
 });
 
@@ -44,10 +49,12 @@ export function toPropertyView(
 
 export const toOfferView = ({
   closeReason,
+  reviewedBy: _reviewedBy,
   ...o
 }: Row<typeof t.offers>): OfferView => ({
   ...o,
   ...(closeReason ? { closeReason } : {}),
+  reviewedAt: o.reviewedAt && iso(o.reviewedAt),
   createdAt: iso(o.createdAt),
 });
 
