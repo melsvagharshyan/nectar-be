@@ -9,5 +9,7 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
+    // Specs share one database; running them one at a time keeps totals stable.
+    fileParallelism: false,
   },
 });

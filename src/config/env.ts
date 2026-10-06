@@ -32,9 +32,10 @@ export class Env {
   @IsString()
   JWT_EXPIRES_IN = '7d';
 
+  /** Express `trust proxy` value, e.g. `1` behind one reverse proxy; rate limits key on the client IP. */
+  @IsOptional()
   @IsString()
-  @MinLength(6)
-  ADMIN_SIGNUP_CODE: string;
+  TRUST_PROXY?: string;
 
   @Matches(/^cloudinary:\/\/[^:\s]+:[^@\s]+@[\w-]+$/, {
     message: 'CLOUDINARY_URL must look like cloudinary://<api_key>:<api_secret>@<cloud_name>',

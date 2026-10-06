@@ -34,6 +34,12 @@ export interface Bootstrap {
   employees: EmployeeView[];
   unreadCount: number;
   attentionCount: number;
+  /** Sign-ups awaiting review; always 0 for non-admins. */
+  pendingRegistrations: number;
+  /** Requests waiting for admin review; 0 for non-admins. */
+  pendingRequests: number;
+  /** Offers waiting for admin review; 0 for non-admins. */
+  pendingOffers: number;
 }
 
 /** `total` is only computed for the first page (no cursor). */

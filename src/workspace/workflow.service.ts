@@ -21,6 +21,7 @@ import {
   matchScore,
   OPEN_STAGES,
   SELECTED_OFFER_STATES,
+  SUBMITTABLE_STAGES,
 } from './rules.js';
 import { eventScope } from './scope.js';
 
@@ -36,17 +37,53 @@ interface RequestContext {
 export class WorkflowService {
   constructor(@Inject(DB) private readonly db: Database) {}
 
-  /** Broker starts working on a freshly created request. */
-  start(user: AuthUser, requestId: string) {
+  /** Broker sends a new or rejected request to the admin for review. */
+  submit(user: AuthUser, requestId: string) {
     return this.run(user, async (tx) => {
       const { request } = await this.loadRequest(tx, user, requestId);
-      if (request.stage !== 'created')
-        throw new BadRequestException('Начать подбор нельзя');
+      if (!SUBMITTABLE_STAGES.includes(request.stage))
+        throw new BadRequestException('Запрос уже на проверке или одобрен');
       await tx
         .update(t.requests)
-        .set({ stage: 'in_progress' })
+        .set({ stage: 'pending_review', submittedAt: new Date(), rejectReason: null })
         .where(eq(t.requests.id, request.id));
-      await this.addEvent(tx, 'started', request.id);
+      await this.addEvent(tx, 'request_submitted', request.id);
+    });
+  }
+
+  /** Admin approves a request, opening it to partners. */
+  approveRequest(user: AuthUser, requestId: string) {
+    return this.run(user, async (tx) => {
+      const { request } = await this.loadPendingRequest(tx, user, requestId);
+      await tx
+        .update(t.requests)
+        .set({ reviewedBy: user.id, reviewedAt: new Date() })
+        .where(eq(t.requests.id, request.id));
+      // A re-approved request goes back to `has_offers` if offers are still live.
+      await this.recalcStages(tx, eq(t.requests.id, request.id));
+      const [started] = await tx
+        .select({ id: t.events.id })
+        .from(t.events)
+        .where(and(eq(t.events.requestId, request.id), eq(t.events.type, 'started')));
+      // `started` opens the request to partners once; later approvals follow an edit.
+      await this.addEvent(tx, started ? 'request_approved' : 'started', request.id);
+    });
+  }
+
+  /** Admin rejects a request; the broker edits it and resubmits. */
+  rejectRequest(user: AuthUser, requestId: string, reason: string) {
+    return this.run(user, async (tx) => {
+      const { request } = await this.loadPendingRequest(tx, user, requestId);
+      await tx
+        .update(t.requests)
+        .set({
+          stage: 'rejected',
+          rejectReason: reason,
+          reviewedBy: user.id,
+          reviewedAt: new Date(),
+        })
+        .where(eq(t.requests.id, request.id));
+      await this.addEvent(tx, 'request_rejected', request.id);
     });
   }
 
@@ -118,7 +155,7 @@ export class WorkflowService {
     });
   }
 
-  /** Partner sends the given properties (or their whole draft) as offers. */
+  /** Partner sends the given properties (or their whole draft) for admin review. */
   sendOffers(user: AuthUser, requestId: string, propertyIds?: string[]) {
     return this.run(user, async (tx) => {
       const companyId = user.companyId!;
@@ -173,7 +210,9 @@ export class WorkflowService {
           state: 'sent',
           disposition: 'neutral',
           matchScore: matchScore(ctx.request, byId.get(propertyId)!),
+          review: 'pending',
         });
+        await this.addEvent(tx, 'offer_submitted', requestId, propertyId);
       }
       await tx
         .delete(t.drafts)
@@ -183,27 +222,122 @@ export class WorkflowService {
             inArray(t.drafts.propertyId, ids),
           ),
         );
-      await tx
-        .update(t.requests)
-        .set({ stage: 'has_offers' })
-        .where(eq(t.requests.id, requestId));
-      await this.addEvent(tx, 'offers_sent', requestId);
     });
   }
 
-  /** Broker hands the selected offers over to the CRM. */
+  /** Admin approves an offer, showing it to the broker. */
+  approveOffer(user: AuthUser, offerId: string) {
+    return this.run(user, async (tx) => {
+      const offer = await this.loadPendingOffer(tx, offerId);
+      await tx
+        .update(t.offers)
+        .set({ review: 'approved', reviewedBy: user.id, reviewedAt: new Date() })
+        .where(eq(t.offers.id, offer.id));
+      await this.recalcStages(
+        tx,
+        and(
+          eq(t.requests.id, offer.requestId),
+          inArray(t.requests.stage, OPEN_STAGES),
+        ),
+      );
+      await this.addEvent(tx, 'offers_sent', offer.requestId, offer.propertyId);
+    });
+  }
+
+  /** Admin rejects an offer; the partner fixes the property and resubmits. */
+  declineOffer(user: AuthUser, offerId: string, reason: string) {
+    return this.run(user, async (tx) => {
+      const offer = await this.loadPendingOffer(tx, offerId);
+      await tx
+        .update(t.offers)
+        .set({
+          review: 'rejected',
+          rejectReason: reason,
+          reviewedBy: user.id,
+          reviewedAt: new Date(),
+        })
+        .where(eq(t.offers.id, offer.id));
+      await this.addEvent(tx, 'offer_rejected', offer.requestId, offer.propertyId);
+    });
+  }
+
+  /** Partner sends a rejected offer back for review. */
+  resubmitOffer(user: AuthUser, offerId: string) {
+    return this.run(user, async (tx) => {
+      const [found] = await tx
+        .select({ offer: t.offers, availability: t.properties.availability })
+        .from(t.offers)
+        .innerJoin(t.properties, eq(t.properties.id, t.offers.propertyId))
+        .where(
+          and(
+            eq(t.offers.id, offerId),
+            eq(t.offers.companyId, user.companyId ?? ''),
+          ),
+        );
+      if (!found) throw new NotFoundException('Предложение не найдено');
+      this.assertEditable(await this.loadRequest(tx, user, found.offer.requestId));
+      if (found.offer.review !== 'rejected')
+        throw new BadRequestException('Предложение не было отклонено');
+      if (
+        found.availability !== 'active' ||
+        ['closed', 'unavailable'].includes(found.offer.state)
+      )
+        throw new BadRequestException('Объект недоступен для предложения');
+      await tx
+        .update(t.offers)
+        .set({ review: 'pending', rejectReason: null })
+        .where(eq(t.offers.id, offerId));
+      await this.addEvent(
+        tx,
+        'offer_submitted',
+        found.offer.requestId,
+        found.offer.propertyId,
+      );
+    });
+  }
+
+  /**
+   * Broker reserves the booked offers for the admin's final review. A property
+   * can only be in one active reservation; booked offers whose property is
+   * already reserved by another request stay booked but are left out.
+   */
   transfer(user: AuthUser, requestId: string) {
     return this.run(user, async (tx) => {
       const ctx = await this.loadRequest(tx, user, requestId);
       this.assertEditable(ctx);
-      const selected = ctx.offers.filter(
+      const booked = ctx.offers.filter(
         (o) =>
           o.available &&
           (SELECTED_OFFER_STATES as readonly string[]).includes(o.state),
       );
+      // Row locks serialize brokers reserving the same property concurrently.
+      const propertyIds = booked.map((o) => o.propertyId);
+      if (propertyIds.length)
+        await tx
+          .select({ id: t.properties.id })
+          .from(t.properties)
+          .where(inArray(t.properties.id, propertyIds))
+          .orderBy(t.properties.id)
+          .for('update');
+      const held = propertyIds.length
+        ? await tx
+            .select({ propertyId: t.offers.propertyId })
+            .from(t.offers)
+            .where(
+              and(
+                inArray(t.offers.propertyId, propertyIds),
+                eq(t.offers.state, 'transferred'),
+                ne(t.offers.requestId, requestId),
+              ),
+            )
+        : [];
+      const heldIds = new Set(held.map((h) => h.propertyId));
+      const selected = booked.filter((o) => !heldIds.has(o.propertyId));
       if (!selected.length)
         throw new BadRequestException(
-          'Выберите хотя бы одно доступное предложение',
+          booked.length
+            ? 'Выбранные объекты уже зарезервированы по другим запросам'
+            : 'Выберите хотя бы одно доступное предложение',
         );
       const offerIds = selected.map((o) => o.id);
       await tx.insert(t.transfers).values({
@@ -224,13 +358,13 @@ export class WorkflowService {
     });
   }
 
-  /** Admin returns an active transfer back to work. */
-  returnTransfer(user: AuthUser, transferId: string) {
+  /** Admin declines the reservation at final review and returns it to work. */
+  returnTransfer(user: AuthUser, transferId: string, reason: string) {
     return this.run(user, async (tx) => {
       const transfer = await this.loadActiveTransfer(tx, transferId);
       await tx
         .update(t.transfers)
-        .set({ state: 'returned' })
+        .set({ state: 'returned', returnReason: reason })
         .where(eq(t.transfers.id, transfer.id));
       const ctx = await this.loadRequest(tx, user, transfer.requestId);
       for (const offer of ctx.offers.filter((o) =>
@@ -376,6 +510,29 @@ export class WorkflowService {
     };
   }
 
+  private async loadPendingOffer(tx: Transaction, offerId: string) {
+    const [offer] = await tx
+      .select()
+      .from(t.offers)
+      .where(eq(t.offers.id, offerId))
+      .for('update');
+    if (!offer) throw new NotFoundException('Предложение не найдено');
+    if (offer.review !== 'pending')
+      throw new BadRequestException('Предложение не ожидает проверки');
+    return offer;
+  }
+
+  private async loadPendingRequest(
+    tx: Transaction,
+    user: AuthUser,
+    requestId: string,
+  ) {
+    const ctx = await this.loadRequest(tx, user, requestId);
+    if (ctx.request.stage !== 'pending_review')
+      throw new BadRequestException('Запрос не ожидает проверки');
+    return ctx;
+  }
+
   private async loadSelectableOffer(
     tx: Transaction,
     user: AuthUser,
@@ -410,7 +567,7 @@ export class WorkflowService {
       throw new BadRequestException('Запрос завершён или передан в CRM');
   }
 
-  /** A request "has offers" while at least one offer is still available. */
+  /** A request "has offers" while at least one approved offer is still available. */
   async recalcStages(tx: Transaction, where: SQL | undefined) {
     await tx
       .update(t.requests)
@@ -419,6 +576,7 @@ export class WorkflowService {
           select 1 from ${t.offers}
           inner join ${t.properties} on ${t.properties.id} = ${t.offers.propertyId}
           where ${t.offers.requestId} = ${t.requests.id}
+            and ${t.offers.review} = 'approved'
             and ${t.offers.state} not in ('closed', 'unavailable')
             and ${t.properties.availability} = 'active'
         ) then 'has_offers' else 'in_progress' end::request_stage`,
@@ -426,7 +584,7 @@ export class WorkflowService {
       .where(where);
   }
 
-  private async addEvent(
+  async addEvent(
     tx: Transaction,
     type: EventType,
     requestId: string,

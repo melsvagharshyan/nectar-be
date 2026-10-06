@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import pg from 'pg';
 import { hashPassword } from '../../auth/password.js';
 import { matchScore } from '../../workspace/rules.js';
@@ -11,6 +11,8 @@ import {
   COMPANIES,
   DEMO_PASSWORD,
   EMPLOYEES,
+  OWN_COMPANIES,
+  OWN_OWNERS,
   PROPERTIES,
   REQUESTS,
   USERS,
@@ -48,6 +50,22 @@ async function clear(tx: Transaction) {
   await tx.delete(t.companies).where(inArray(t.companies.id, COMPANIES.map((c) => c.id)));
 }
 
+/**
+ * The demo data hangs off RF-100 / AM-101, which normally are the first approved
+ * sign-ups. Creates stand-ins when missing and keeps the id sequence past them,
+ * so a later approval can't be handed the same id.
+ */
+async function ensureOwnCompanies(tx: Transaction) {
+  await tx
+    .insert(t.companies)
+    .values(OWN_COMPANIES.map((c) => ({ ...c, createdAt: daysAgo(30) })))
+    .onConflictDoNothing();
+  await tx.insert(t.employees).values(OWN_OWNERS).onConflictDoNothing();
+  await tx.execute(
+    sql`select setval('company_id_seq', greatest((select last_value from company_id_seq), 101))`,
+  );
+}
+
 async function main() {
   configureCloudinary(env('CLOUDINARY_URL'));
   console.log('Uploading photos to Cloudinary…');
@@ -59,6 +77,7 @@ async function main() {
 
   await db.transaction(async (tx) => {
     await clear(tx);
+    await ensureOwnCompanies(tx);
 
     await tx.insert(t.companies).values(
       COMPANIES.map((c) => ({ ...c, createdAt: daysAgo(30) })),
@@ -114,7 +133,12 @@ async function main() {
 
     for (const r of REQUESTS) {
       const { offers, transfer, drafts, events: _events, daysAgo: age, ...request } = r;
-      await tx.insert(t.requests).values({ ...request, createdAt: daysAgo(age) });
+      await tx.insert(t.requests).values({
+        ...request,
+        // Everything past a draft went through admin review.
+        submittedAt: request.stage === 'created' ? null : daysAgo(age),
+        createdAt: daysAgo(age),
+      });
       for (const o of offers) {
         const property = propertyById.get(o.propertyId)!;
         await tx.insert(t.offers).values({
@@ -126,6 +150,8 @@ async function main() {
           disposition: o.disposition ?? 'neutral',
           closeReason: o.closeReason ?? null,
           matchScore: matchScore(r, property),
+          review: o.review ?? 'approved',
+          rejectReason: o.rejectReason ?? null,
           createdAt: daysAgo(o.daysAgo),
         });
       }

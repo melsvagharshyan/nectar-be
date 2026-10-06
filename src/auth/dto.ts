@@ -11,7 +11,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { MEDIA_URL } from '../uploads/media-url.js';
-import type { Role } from './auth.types.js';
+import type { SignUpRole } from './auth.types.js';
 
 const normalizeEmail = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim().toLowerCase() : value;
@@ -29,8 +29,9 @@ export class SignInDto {
 }
 
 export class SignUpDto {
-  @IsIn(['broker', 'partner', 'admin'], { message: 'Выберите роль' })
-  role: Role;
+  // Admins are provisioned separately and never sign up.
+  @IsIn(['broker', 'partner'], { message: 'Выберите роль' })
+  role: SignUpRole;
 
   @Transform(trim)
   @IsString()
@@ -54,16 +55,10 @@ export class SignUpDto {
   phone?: string;
 
   @Transform(trim)
-  @ValidateIf((o: SignUpDto) => o.role !== 'admin')
   @IsString()
   @MinLength(2, { message: 'Укажите название компании' })
   @MaxLength(160)
-  companyName?: string;
-
-  @ValidateIf((o: SignUpDto) => o.role === 'admin')
-  @IsString()
-  @IsNotEmpty({ message: 'Введите код администратора' })
-  adminCode?: string;
+  companyName: string;
 }
 
 /** Omitted fields stay unchanged; `avatarUrl: null` removes the photo. */

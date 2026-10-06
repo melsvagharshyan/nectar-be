@@ -1,9 +1,24 @@
-import { Body, Controller, Get, HttpCode, Patch, Post, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Patch,
+  Post,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { minutes, Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import type { Env } from '../config/env.js';
 import { AuthService } from './auth.service.js';
-import type { AuthResponse, AuthUser, IssuedSession } from './auth.types.js';
+import type {
+  AuthResponse,
+  AuthUser,
+  IssuedSession,
+  SignUpResponse,
+} from './auth.types.js';
 import { CurrentUser, Public } from './decorators.js';
 import {
   ChangePasswordDto,
@@ -20,16 +35,18 @@ export class AuthController {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
+  /** Files an application for admin review; no session is started. */
   @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: minutes(1) } })
+  @HttpCode(202)
   @Post('sign-up')
-  async signUp(
-    @Body() dto: SignUpDto,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<AuthResponse> {
-    return this.startSession(res, await this.auth.signUp(dto));
+  signUp(@Body() dto: SignUpDto): Promise<SignUpResponse> {
+    return this.auth.signUp(dto);
   }
 
   @Public()
+  @UseGuards(ThrottlerGuard)
   @HttpCode(200)
   @Post('sign-in')
   async signIn(

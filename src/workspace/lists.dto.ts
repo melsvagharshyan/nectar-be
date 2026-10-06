@@ -12,6 +12,8 @@ import { CursorQueryDto, PageQueryDto } from './pagination.js';
 
 const STAGE_FILTERS = [
   'created',
+  'pending_review',
+  'rejected',
   'in_progress',
   'has_offers',
   'crm',
@@ -27,7 +29,15 @@ const OFFER_FILTERS = [
   'unavailable',
   'closed_any',
 ] as const;
-const ADMIN_VIEWS = ['active', 'crm', 'sold', 'offers', 'interested'] as const;
+const OFFER_REVIEWS = ['pending', 'approved', 'rejected'] as const;
+const ADMIN_VIEWS = [
+  'review',
+  'active',
+  'crm',
+  'sold',
+  'offers',
+  'interested',
+] as const;
 
 const toBoolean = ({ value }: { value: unknown }) =>
   value === true || value === 'true' || value === '1';
@@ -108,6 +118,10 @@ export class OffersTableQueryDto extends AdminRequestFilters {
   @IsOptional()
   @IsIn(OFFER_FILTERS)
   state?: (typeof OFFER_FILTERS)[number];
+
+  @IsOptional()
+  @IsIn(OFFER_REVIEWS)
+  review?: (typeof OFFER_REVIEWS)[number];
 }
 
 /** Shared by the paged table (`page`) and the infinite feed (`cursor`). */
@@ -162,8 +176,8 @@ export class PropertiesQueryDto extends PageQueryDto {
 
 export class NotificationsQueryDto extends CursorQueryDto {
   @IsOptional()
-  @IsIn(['all', 'new', 'crm'])
-  filter?: 'all' | 'new' | 'crm';
+  @IsIn(['all', 'new', 'crm', 'review'])
+  filter?: 'all' | 'new' | 'crm' | 'review';
 }
 
 export class EventsQueryDto {

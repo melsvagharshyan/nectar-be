@@ -28,32 +28,73 @@ export class InsightsService {
 
   async bootstrap(user: AuthUser): Promise<Bootstrap> {
     const unread = sql`not exists (select 1 from ${t.eventReads} er where er.event_id = ${t.events.id} and er.user_id = ${user.id})`;
-    const [companies, employees, [{ unreadCount }], [{ attentionCount }]] =
-      await Promise.all([
-        this.db.select().from(t.companies).orderBy(asc(t.companies.id)),
-        this.db
-          .select()
-          .from(t.employees)
-          .where(
-            user.role === 'admin'
-              ? undefined
-              : eq(t.employees.companyId, user.companyId ?? ''),
-          )
-          .orderBy(asc(t.employees.id)),
-        this.db
-          .select({ unreadCount: count() })
-          .from(t.events)
-          .where(and(eventScope(user), unread)),
-        this.db
-          .select({ attentionCount: count() })
-          .from(t.requests)
-          .where(and(requestScope(user), attentionSql)),
-      ]);
+    const [
+      companies,
+      employees,
+      [{ unreadCount }],
+      [{ attentionCount }],
+      pendingRegistrations,
+      pendingRequests,
+      pendingOffers,
+    ] = await Promise.all([
+      // Others' companies are admin-only; brokers and partners get their own.
+      this.db
+        .select()
+        .from(t.companies)
+        .where(
+          user.role === 'admin'
+            ? undefined
+            : eq(t.companies.id, user.companyId ?? ''),
+        )
+        .orderBy(asc(t.companies.id)),
+      this.db
+        .select()
+        .from(t.employees)
+        .where(
+          user.role === 'admin'
+            ? undefined
+            : eq(t.employees.companyId, user.companyId ?? ''),
+        )
+        .orderBy(asc(t.employees.id)),
+      this.db
+        .select({ unreadCount: count() })
+        .from(t.events)
+        .where(and(eventScope(user), unread)),
+      this.db
+        .select({ attentionCount: count() })
+        .from(t.requests)
+        .where(and(requestScope(user), attentionSql)),
+      // Only admins review sign-ups, so others skip the query.
+      user.role === 'admin'
+        ? this.db
+            .select({ total: count() })
+            .from(t.registrationRequests)
+            .where(eq(t.registrationRequests.status, 'pending'))
+            .then(([row]) => row.total)
+        : 0,
+      user.role === 'admin'
+        ? this.db
+            .select({ total: count() })
+            .from(t.requests)
+            .where(eq(t.requests.stage, 'pending_review'))
+            .then(([row]) => row.total)
+        : 0,
+      user.role === 'admin'
+        ? this.db
+            .select({ total: count() })
+            .from(t.offers)
+            .where(eq(t.offers.review, 'pending'))
+            .then(([row]) => row.total)
+        : 0,
+    ]);
     return {
       companies: companies.map(toCompanyView),
       employees,
       unreadCount,
       attentionCount,
+      pendingRegistrations,
+      pendingRequests,
+      pendingOffers,
     };
   }
 
@@ -61,7 +102,11 @@ export class InsightsService {
     const scope = requestScope(user) ?? sql`true`;
     const company = user.companyId ?? '';
     const partner = user.role === 'partner';
-    const ownOffer = partner ? sql`o.company_id = ${company}` : sql`true`;
+    const ownOffer = partner
+      ? sql`o.company_id = ${company}`
+      : user.role === 'broker'
+        ? sql`o.review = 'approved'`
+        : sql`true`;
 
     const [
       [requestAgg],
@@ -196,6 +241,10 @@ export class InsightsService {
       .orderBy(asc(t.companies.id));
   }
 
+  /**
+   * Active listings per district. Brokers get anonymous whole-market totals;
+   * partners only their own listings.
+   */
   async districtStats(user: AuthUser): Promise<DistrictStats> {
     const rows = await this.db
       .select({
@@ -204,7 +253,12 @@ export class InsightsService {
         minPrice: sql<number | null>`min(${t.properties.price})`,
       })
       .from(t.properties)
-      .where(and(propertyScope(user), eq(t.properties.availability, 'active')))
+      .where(
+        and(
+          user.role === 'broker' ? undefined : propertyScope(user),
+          eq(t.properties.availability, 'active'),
+        ),
+      )
       .groupBy(t.properties.district);
     return Object.fromEntries(
       rows.map((r) => [r.district, { count: r.total, minPrice: r.minPrice }]),

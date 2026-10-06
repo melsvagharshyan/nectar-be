@@ -71,6 +71,8 @@ import { emptySlice, SlicesService } from './slices.service.js';
 import type { CompanyView, EventView, PropertyAvailability } from './workspace.types.js';
 
 const CRM_EVENT_TYPES = sql`('transferred', 'returned', 'sold')`;
+const REVIEW_EVENT_TYPES = sql`('request_submitted', 'request_approved', 'request_rejected',
+  'offer_submitted', 'offer_rejected', 'offers_sent', 'started')`;
 const CLOSED_OFFER_STATES = sql`('closed', 'unavailable')`;
 
 const requestSearch = (search?: string) =>
@@ -86,6 +88,8 @@ const clientOfCompany = (companyId: string) =>
 
 function adminViewSql(view?: AdminRequestFilters['view']): SQL | undefined {
   switch (view) {
+    case 'review':
+      return sql`${t.requests.stage} = 'pending_review'`;
     case 'active':
       return sql`${t.requests.stage} <> 'sold'`;
     case 'crm':
@@ -284,6 +288,7 @@ export class ListsService {
       offerScope(user),
       requestScope(user),
       state,
+      q.review ? eq(t.offers.review, q.review) : undefined,
       ...(user.role === 'admin'
         ? [
             ...adminRequestConds(q, false),
@@ -308,7 +313,7 @@ export class ListsService {
     ]);
     const offers = rows.map((r) => r.offer);
     return {
-      items: offers.map(toOfferView),
+      items: await this.slices.withReservations(offers.map(toOfferView)),
       total,
       page: q.page,
       limit: q.limit,
@@ -462,6 +467,7 @@ export class ListsService {
           eventScope(user),
           q.filter === 'new' ? sql`not ${read}` : undefined,
           q.filter === 'crm' ? sql`${t.events.type} in ${CRM_EVENT_TYPES}` : undefined,
+          q.filter === 'review' ? sql`${t.events.type} in ${REVIEW_EVENT_TYPES}` : undefined,
           afterCursor(t.events.createdAt, t.events.id, q.cursor),
         ),
       )

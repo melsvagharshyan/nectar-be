@@ -1,7 +1,7 @@
 import { Body, Controller, HttpCode, Param, Post } from '@nestjs/common';
 import type { AuthUser } from '../auth/auth.types.js';
 import { CurrentUser, Roles } from '../auth/decorators.js';
-import { InterestDto, SellDto, SendOffersDto } from './dto.js';
+import { InterestDto, ReviewRejectDto, SellDto, SendOffersDto } from './dto.js';
 import { WorkflowService } from './workflow.service.js';
 
 @Controller()
@@ -10,9 +10,27 @@ export class WorkspaceController {
 
   @Roles('broker')
   @HttpCode(200)
-  @Post('requests/:id/start')
-  start(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.workflow.start(user, id);
+  @Post('requests/:id/submit')
+  submit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.workflow.submit(user, id);
+  }
+
+  @Roles('admin')
+  @HttpCode(200)
+  @Post('requests/:id/approve')
+  approveRequest(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.workflow.approveRequest(user, id);
+  }
+
+  @Roles('admin')
+  @HttpCode(200)
+  @Post('requests/:id/reject')
+  rejectRequest(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ReviewRejectDto,
+  ) {
+    return this.workflow.rejectRequest(user, id, dto.reason);
   }
 
   @Roles('broker')
@@ -71,9 +89,39 @@ export class WorkspaceController {
 
   @Roles('admin')
   @HttpCode(200)
+  @Post('offers/:id/approve')
+  approveOffer(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.workflow.approveOffer(user, id);
+  }
+
+  /** Admin review rejection; `offers/:id/reject` is the broker's "not a fit". */
+  @Roles('admin')
+  @HttpCode(200)
+  @Post('offers/:id/decline')
+  declineOffer(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ReviewRejectDto,
+  ) {
+    return this.workflow.declineOffer(user, id, dto.reason);
+  }
+
+  @Roles('partner')
+  @HttpCode(200)
+  @Post('offers/:id/resubmit')
+  resubmitOffer(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.workflow.resubmitOffer(user, id);
+  }
+
+  @Roles('admin')
+  @HttpCode(200)
   @Post('transfers/:id/return')
-  returnTransfer(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.workflow.returnTransfer(user, id);
+  returnTransfer(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ReviewRejectDto,
+  ) {
+    return this.workflow.returnTransfer(user, id, dto.reason);
   }
 
   @Roles('admin')

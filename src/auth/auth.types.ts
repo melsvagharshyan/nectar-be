@@ -1,5 +1,8 @@
 export type Role = 'broker' | 'partner' | 'admin';
 
+/** Roles that can apply through the public sign-up form. */
+export type SignUpRole = Exclude<Role, 'admin'>;
+
 export interface JwtPayload {
   sub: string;
   role: Role;
@@ -31,4 +34,10 @@ export interface AuthResponse {
 export interface IssuedSession extends AuthResponse {
   token: string;
   expiresAt: Date;
+}
+
+/** Sign-up only files an application; the account is created on approval. */
+export interface SignUpResponse {
+  status: 'pending';
+  email: string;
 }

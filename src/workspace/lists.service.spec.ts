@@ -8,6 +8,7 @@ import * as t from '../database/schema.js';
 import { InsightsService } from './insights.service.js';
 import type { CursorPage } from './pagination.js';
 import { ListsService } from './lists.service.js';
+import { UNAPPROVED_STAGES } from './rules.js';
 import { SlicesService } from './slices.service.js';
 import { ReferenceSnapshot } from './snapshot.reference.js';
 
@@ -109,12 +110,19 @@ describe.skipIf(!process.env.DATABASE_URL)('ListsService role scoping', () => {
     expect(feed.items.every((p) => !p.privateNotes && !p.internalAddress)).toBe(true);
   });
 
-  it('partner never sees created requests or client contacts', async () => {
+  it('partner never sees unapproved requests or client contacts', async () => {
     const user = users.partner;
     const page = await lists.requests(user, { limit: 50 });
-    expect(page.items.some((r) => r.stage === 'created')).toBe(false);
+    expect(
+      page.items.some((r) => UNAPPROVED_STAGES.includes(r.stage)),
+    ).toBe(false);
     expect(page.slice.clients.every((c) => !c.phone && !c.email)).toBe(true);
     expect(page.slice.offers.every((o) => o.companyId === user.companyId)).toBe(true);
+  });
+
+  it('broker only sees offers an admin approved', async () => {
+    const page = await lists.requests(users.broker, { limit: 50 });
+    expect(page.slice.offers.every((o) => o.review === 'approved')).toBe(true);
   });
 
   it('paged tables report totals that match the rows', async () => {

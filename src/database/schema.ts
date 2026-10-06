@@ -1,5 +1,8 @@
+import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   boolean,
+  check,
   doublePrecision,
   index,
   integer,
@@ -10,13 +13,21 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
 export const userRole = pgEnum('user_role', ['broker', 'partner', 'admin']);
 export const companyKind = pgEnum('company_kind', ['rf', 'am']);
+export const registrationStatus = pgEnum('registration_status', [
+  'pending',
+  'approved',
+  'rejected',
+]);
 export const requestStage = pgEnum('request_stage', [
   'created',
+  'pending_review',
+  'rejected',
   'in_progress',
   'has_offers',
   'crm',
@@ -38,6 +49,11 @@ export const offerDisposition = pgEnum('offer_disposition', [
   'neutral',
   'rejected',
 ]);
+export const offerReview = pgEnum('offer_review', [
+  'pending',
+  'approved',
+  'rejected',
+]);
 export const offerCloseReason = pgEnum('offer_close_reason', [
   'sold',
   'not_selected',
@@ -54,6 +70,11 @@ export const eventType = pgEnum('event_type', [
   'returned',
   'sold',
   'started',
+  'request_submitted',
+  'request_approved',
+  'request_rejected',
+  'offer_submitted',
+  'offer_rejected',
 ]);
 
 // Seeded demo records use low numbers; generated ids start above them.
@@ -104,8 +125,55 @@ export const users = pgTable('users', {
   employeeId: text('employee_id').references(() => employees.id, {
     onDelete: 'set null',
   }),
+  /** Set when an admin deactivates the account; null = active. */
+  blockedAt: timestamp('blocked_at', { withTimezone: true }),
+  blockedBy: uuid('blocked_by').references((): AnyPgColumn => users.id, {
+    onDelete: 'set null',
+  }),
+  blockReason: text('block_reason'),
   createdAt: createdAt(),
 });
+
+/** Self-service sign-ups waiting for an admin; accounts are created on approval. */
+export const registrationRequests = pgTable(
+  'registration_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    // Only the two broker roles can apply; admins are provisioned separately.
+    role: userRole('role').notNull(),
+    status: registrationStatus('status').notNull().default('pending'),
+    email: text('email').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    name: text('name').notNull(),
+    phone: text('phone').notNull().default(''),
+    companyName: text('company_name').notNull(),
+    rejectReason: text('reject_reason'),
+    reviewedBy: uuid('reviewed_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    // Filled on approval: the account and company that were created.
+    userId: uuid('user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    companyId: text('company_id').references(() => companies.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check('registration_requests_role_check', sql`${t.role} <> 'admin'`),
+    // At most one open application per email.
+    uniqueIndex('registration_requests_pending_email_uq')
+      .on(t.email)
+      .where(sql`${t.status} = 'pending'`),
+    index('registration_requests_status_created_idx').on(
+      t.status,
+      t.createdAt,
+      t.id,
+    ),
+  ],
+);
 
 export const clients = pgTable(
   'clients',
@@ -150,6 +218,13 @@ export const requests = pgTable(
     parking: text('parking').notNull().default(''),
     view: text('view').notNull().default(''),
     amenities: text('amenities').array().notNull().default([]),
+    // Admin review: partners only see a request once an admin approves it.
+    submittedAt: timestamp('submitted_at', { withTimezone: true }),
+    rejectReason: text('reject_reason'),
+    reviewedBy: uuid('reviewed_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -220,9 +295,17 @@ export const offers = pgTable(
     disposition: offerDisposition('disposition').notNull().default('neutral'),
     closeReason: offerCloseReason('close_reason'),
     matchScore: integer('match_score').notNull().default(0),
+    // Admin review: brokers only see approved offers.
+    review: offerReview('review').notNull().default('pending'),
+    rejectReason: text('reject_reason'),
+    reviewedBy: uuid('reviewed_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
+    index('offers_review_idx').on(t.review, t.createdAt),
     unique('offers_request_property_uq').on(t.requestId, t.propertyId),
     index('offers_property_idx').on(t.propertyId),
     index('offers_company_idx').on(t.companyId, t.requestId),
@@ -241,6 +324,8 @@ export const transfers = pgTable(
     soldPropertyId: text('sold_property_id').references(() => properties.id, {
       onDelete: 'set null',
     }),
+    /** Admin's reason for returning the reservation; shown to the broker. */
+    returnReason: text('return_reason'),
     createdAt: createdAt(),
   },
   (t) => [index('transfers_request_idx').on(t.requestId)],
